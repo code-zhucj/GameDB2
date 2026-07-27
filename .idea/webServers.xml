@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="8881e9ea-8fc8-41ed-8f2d-e2c5a3c455d0" name="我滴笔记本电脑">
+        <fileTransfer accessType="SFTP" host="192.168.31.73" port="22" sshConfigId="a9034cb2-2888-4fec-8915-cfba325587a9" sshConfig="zhuchuanji@192.168.31.73:22 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

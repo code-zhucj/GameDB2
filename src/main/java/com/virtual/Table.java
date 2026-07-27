@@ -1,0 +1,183 @@
+package com.virtual;
+
+import com.virtual.api.T;
+import com.virtual.persistent.Persistent;
+import com.virtual.persistent.TableHelper;
+import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
+
+@Slf4j
+public class Table<Entity extends TableDefine<?>> implements TableHelper<Entity> {
+
+    private final Class<Entity> tableClass;
+    private final Map<Comparable<?>, Record<Entity>> records = new ConcurrentHashMap<>();
+    @Getter
+    private String tableName;
+    private int cacheSize;
+
+    private final TableHelper<Entity> tableHelper;
+    private final ReentrantLock tableLock = new ReentrantLock();
+
+
+    public Table(Class<Entity> tableClass) {
+        this.tableClass = tableClass;
+        initTableInfo();
+        tableHelper = Persistent.INSTANCE.getTableHelper(tableName, tableClass);
+    }
+
+    public void initTableInfo() {
+        T t = this.tableClass.getAnnotation(T.class);
+        tableName = t.value();
+        if (tableName.isBlank()) {
+            tableName = this.tableClass.getSimpleName();
+        }
+        cacheSize = t.cacheSize();
+    }
+
+    /**
+     * 只允许开服的时候调用一次,这里应该只对需要全缓存的表进行加载
+     */
+    public void loadFromDB() {
+        tableLock.lock();
+        try {
+            Iterable<? extends Entity> iterator = tableHelper.selectByLimit(cacheSize);
+            iterator.forEach(entity -> records.put(entity.primaryKey(), new Record<>(Record.State.DB, this, entity)));
+            log.info("table {} load from DB, count: {}", tableName, records.size());
+        } catch (Exception e) {
+            tableLock.unlock();
+        }
+    }
+
+    @Override
+    public void insert(Entity entity) {
+        // todo 这里的主键先让用户自己设置,后续补充自增主键
+        entity.setInitComplete();
+        validPrimaryKey(entity.primaryKey());
+        TransactionImpl transaction = TransactionImpl.checkAndGet();
+        LockKey lockKey = Locks.getOrCreateLockKey(getTableName(), entity.primaryKey());
+        Record<Entity> record = transaction.getRecord(lockKey);
+        if (record != null) {
+            if (record.getState() == Record.State.NULL) {
+                record.setState(Record.State.INSERT);
+                record.setEntity(entity);
+            } else {
+                throw new GameDBException(); // 主键重复
+            }
+        } else {
+            lockKey.readLock();
+            try {
+                record = this.records.get(entity.primaryKey());
+                if (record == null) {
+                    Entity select = tableHelper.select(entity.primaryKey());
+                    if (select != null) {
+                        this.records.put(entity.primaryKey(), new Record<>(Record.State.DB, this, select));
+                        throw new GameDBException(); // 主键重复
+                    }
+                    this.records.put(entity.primaryKey(), record = new Record<>(Record.State.NULL, this, entity.primaryKey()));
+                }
+                Record<Entity> copy = record.copy();
+                copy.setState(Record.State.DELETE);
+                transaction.recorded(copy);
+            } finally {
+                lockKey.readUnlock();
+            }
+
+        }
+    }
+
+    @Override
+    public void update(Entity entity) {
+        validPrimaryKey(entity.primaryKey());
+        // 这里更像是用一个新的entity去覆盖旧的entity,实际业务使用中应该比较少,都是直接select后直接在对象上修改
+        TransactionImpl transaction = TransactionImpl.checkAndGet();
+        LockKey lockKey = Locks.getOrCreateLockKey(getTableName(), entity.primaryKey());
+        Record<Entity> recordCopy = transaction.getRecord(lockKey);
+        if (recordCopy == null) {
+            lockKey.readLock();
+            try {
+                Record<Entity> record = this.records.get(entity.primaryKey());
+                if (record == null) {
+                    Entity select = tableHelper.select(entity.primaryKey());
+                    record = select == null ? new Record<>(Record.State.NULL, this, entity.primaryKey()) : new Record<>(Record.State.DB, this, select);
+                    this.records.put(entity.primaryKey(), record);
+                }
+                transaction.recorded(recordCopy = record.copy());
+            } finally {
+                lockKey.readUnlock();
+            }
+        }
+        if (recordCopy.getState() != Record.State.INSERT) {
+            recordCopy.setState(Record.State.UPDATE);
+        }
+        recordCopy.setEntity(entity);
+    }
+
+    @Override
+    public Iterable<Entity> selectByLimit(int cacheSize) {
+        return tableHelper.selectByLimit(cacheSize);
+    }
+
+
+    @Override
+    public Entity select(Comparable<?> id) {
+        validPrimaryKey(id);
+        TransactionImpl transaction = TransactionImpl.checkAndGet();
+        LockKey lockKey = Locks.getOrCreateLockKey(getTableName(), id);
+        Record<Entity> record = transaction.getRecord(lockKey);
+        if (record == null) {
+            lockKey.readLock();
+            record = this.records.get(id);
+            try {
+                if (record == null) {
+                    // 穿透到DB中查,如果还是没有,则插入一个空节点,避免每次都穿透
+                    Entity select = tableHelper.select(id);
+                    record = select == null ? new Record<>(Record.State.NULL, this, id) : new Record<>(Record.State.DB, this, select);
+                    this.records.put(id, record);
+                }
+                transaction.recorded(record.copy());
+            } catch (Exception e) {
+                throw new GameDBException();
+            } finally {
+                lockKey.readUnlock();
+            }
+        }
+        return record.getState() == Record.State.DELETE ? null : record.getEntity();
+    }
+
+    @Override
+    public void delete(Comparable<?> id) {
+        validPrimaryKey(id);
+        TransactionImpl transaction = TransactionImpl.checkAndGet();
+        LockKey lockKey = Locks.getOrCreateLockKey(getTableName(), id);
+        Record<Entity> record = transaction.getRecord(lockKey);
+        if (record != null) {
+            record.setState(Record.State.DELETE);
+        } else {
+            lockKey.readLock();
+            record = this.records.get(id);
+            Record<Entity> copy = record == null ? new Record<>(Record.State.DELETE, this, id) : record.copy();
+            copy.setState(Record.State.DELETE);
+            transaction.recorded(copy);
+            lockKey.readUnlock();
+        }
+    }
+
+
+    private void validPrimaryKey(Comparable<?> id) {
+        if (id == null) {
+            throw new GameDBException();
+        }
+    }
+
+    Record<Entity> getRecord(Comparable<?> primaryKey) {
+        return records.get(primaryKey);
+    }
+
+    void putRecord(Record<?> record){
+        records.put(record.getPrimaryKey(), (Record<Entity>) record);
+    }
+}
