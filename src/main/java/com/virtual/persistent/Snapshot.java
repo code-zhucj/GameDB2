@@ -2,6 +2,7 @@ package com.virtual.persistent;
 
 import com.virtual.LockKey;
 import com.virtual.Record;
+import com.virtual.RowLock;
 import com.virtual.codec.Writer;
 import lombok.extern.slf4j.Slf4j;
 
@@ -9,6 +10,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.LockSupport;
 
 /**
@@ -58,7 +60,9 @@ public class Snapshot extends Thread implements AutoCloseable {
     private void serialization(Map<LockKey, Record<?>> changed) {
         for (Map.Entry<LockKey, Record<?>> entry : changed.entrySet()) {
             // 尝试读锁,没拿到等下一轮
-            if (entry.getKey().tryReadLock()) {
+            RowLock rowLock = entry.getValue().getRowLock();
+            Lock readLock = rowLock.readLock();
+            if (readLock.tryLock()) {
                 // 这里可能有几种情况列举一下 1. 如果当前被移除的记录在别的线程又有新的线程投递,则从时许上来说,处于remove之前,正好本次处理
                 // 处于remove 之后则可以理解为本次处理的为旧的,新的在下一伦处理
                 // 如果是其他key,则插入在当前迭代元素之前,则下一轮处理,插在当前则本论处理,之后则本轮后面正常处理
@@ -75,7 +79,7 @@ public class Snapshot extends Thread implements AutoCloseable {
                     }
                     log.debug("打个快照 {}", entry.getValue());
                 } finally {
-                    entry.getKey().readUnlock();
+                    readLock.unlock();
                 }
             }
         }

@@ -58,34 +58,37 @@ public class Table<Entity extends TableDefine<?>> implements TableHelper<Entity>
         entity.setInitComplete();
         validPrimaryKey(entity.primaryKey());
         TransactionImpl transaction = TransactionImpl.checkAndGet();
-        LockKey lockKey = Locks.getOrCreateLockKey(getTableName(), entity.primaryKey());
-        Record<Entity> record = transaction.getRecord(lockKey);
-        if (record != null) {
-            if (record.getState() == Record.State.NULL) {
-                record.setState(Record.State.INSERT);
-                record.setEntity(entity);
+        RowLock rowLock = Locks.getLock(new LockKey(getTableName(), entity.primaryKey()));
+        Record<Entity> recordCopy = transaction.getRecord(rowLock.lockKey);
+        if (recordCopy != null) {
+            if (recordCopy.getState() == Record.State.NULL) {
+                recordCopy.setState(Record.State.INSERT);
+                recordCopy.setEntity(entity);
             } else {
                 throw new GameDBException(); // 主键重复
             }
         } else {
-            lockKey.readLock();
+            rowLock.readLock().lock();
             try {
-                record = this.records.get(entity.primaryKey());
-                if (record == null) {
+                Record<Entity> tRecord = this.records.get(entity.primaryKey());
+                if (tRecord == null) {
                     Entity select = tableHelper.select(entity.primaryKey());
                     if (select != null) {
                         this.records.put(entity.primaryKey(), new Record<>(Record.State.DB, this, select));
                         throw new GameDBException(); // 主键重复
                     }
-                    this.records.put(entity.primaryKey(), record = new Record<>(Record.State.NULL, this, entity.primaryKey()));
+                    this.records.put(entity.primaryKey(), tRecord = new Record<>(Record.State.NULL, this, entity.primaryKey()));
+                } else if (tRecord.getEntity() != null) {
+                    throw new GameDBException(); // 主键重复
                 }
-                Record<Entity> copy = record.copy();
-                copy.setState(Record.State.DELETE);
-                transaction.recorded(copy);
+                Record<Entity> copy = tRecord.copy();
+                copy.setState(Record.State.INSERT);
+                copy.setEntity(entity);
+                copy.bindLock(rowLock);
+                transaction.recorded(rowLock.lockKey, copy);
             } finally {
-                lockKey.readUnlock();
+                rowLock.readLock().unlock();
             }
-
         }
     }
 
@@ -94,10 +97,10 @@ public class Table<Entity extends TableDefine<?>> implements TableHelper<Entity>
         validPrimaryKey(entity.primaryKey());
         // 这里更像是用一个新的entity去覆盖旧的entity,实际业务使用中应该比较少,都是直接select后直接在对象上修改
         TransactionImpl transaction = TransactionImpl.checkAndGet();
-        LockKey lockKey = Locks.getOrCreateLockKey(getTableName(), entity.primaryKey());
-        Record<Entity> recordCopy = transaction.getRecord(lockKey);
+        RowLock rowLock = Locks.getLock(new LockKey(getTableName(), entity.primaryKey()));
+        Record<Entity> recordCopy = transaction.getRecord(rowLock.lockKey);
         if (recordCopy == null) {
-            lockKey.readLock();
+            rowLock.readLock().lock();
             try {
                 Record<Entity> record = this.records.get(entity.primaryKey());
                 if (record == null) {
@@ -105,9 +108,11 @@ public class Table<Entity extends TableDefine<?>> implements TableHelper<Entity>
                     record = select == null ? new Record<>(Record.State.NULL, this, entity.primaryKey()) : new Record<>(Record.State.DB, this, select);
                     this.records.put(entity.primaryKey(), record);
                 }
-                transaction.recorded(recordCopy = record.copy());
+                Record<Entity> copy = record.copy();
+                copy.bindLock(rowLock);
+                transaction.recorded(rowLock.lockKey, recordCopy = copy);
             } finally {
-                lockKey.readUnlock();
+                rowLock.readLock().unlock();
             }
         }
         if (recordCopy.getState() != Record.State.INSERT) {
@@ -126,43 +131,47 @@ public class Table<Entity extends TableDefine<?>> implements TableHelper<Entity>
     public Entity select(Comparable<?> id) {
         validPrimaryKey(id);
         TransactionImpl transaction = TransactionImpl.checkAndGet();
-        LockKey lockKey = Locks.getOrCreateLockKey(getTableName(), id);
-        Record<Entity> record = transaction.getRecord(lockKey);
-        if (record == null) {
-            lockKey.readLock();
-            record = this.records.get(id);
+        RowLock rowLock = Locks.getLock(new LockKey(getTableName(), id));
+        Record<Entity> recordCopy = transaction.getRecord(rowLock.lockKey);
+        if (recordCopy == null) {
+            rowLock.readLock().lock();
             try {
-                if (record == null) {
+                Record<Entity> tRecord = this.records.get(id);
+                if (tRecord == null) {
                     // 穿透到DB中查,如果还是没有,则插入一个空节点,避免每次都穿透
                     Entity select = tableHelper.select(id);
-                    record = select == null ? new Record<>(Record.State.NULL, this, id) : new Record<>(Record.State.DB, this, select);
-                    this.records.put(id, record);
+                    tRecord = select == null ? new Record<>(Record.State.NULL, this, id) : new Record<>(Record.State.DB, this, select);
+                    this.records.put(id, tRecord);
                 }
-                transaction.recorded(record.copy());
-            } catch (Exception e) {
-                throw new GameDBException();
+                Record<Entity> copy = tRecord.copy();
+                copy.bindLock(rowLock);
+                transaction.recorded(rowLock.lockKey, recordCopy = copy);
             } finally {
-                lockKey.readUnlock();
+                rowLock.readLock().unlock();
             }
         }
-        return record.getState() == Record.State.DELETE ? null : record.getEntity();
+        return recordCopy.getState() == Record.State.DELETE ? null : recordCopy.getEntity();
     }
 
     @Override
     public void delete(Comparable<?> id) {
         validPrimaryKey(id);
         TransactionImpl transaction = TransactionImpl.checkAndGet();
-        LockKey lockKey = Locks.getOrCreateLockKey(getTableName(), id);
-        Record<Entity> record = transaction.getRecord(lockKey);
-        if (record != null) {
-            record.setState(Record.State.DELETE);
+        RowLock rowLock = Locks.getLock(new LockKey(getTableName(), id));
+        Record<Entity> recordCopy = transaction.getRecord(rowLock.lockKey);
+        if (recordCopy != null) {
+            recordCopy.setState(Record.State.DELETE);
         } else {
-            lockKey.readLock();
-            record = this.records.get(id);
-            Record<Entity> copy = record == null ? new Record<>(Record.State.DELETE, this, id) : record.copy();
-            copy.setState(Record.State.DELETE);
-            transaction.recorded(copy);
-            lockKey.readUnlock();
+            rowLock.readLock().lock();
+            try {
+                Record<Entity> tRecord = this.records.get(id);
+                Record<Entity> copy = tRecord == null ? new Record<>(Record.State.DELETE, this, id) : tRecord.copy();
+                copy.bindLock(rowLock);
+                copy.setState(Record.State.DELETE);
+                transaction.recorded(rowLock.lockKey, copy);
+            } finally {
+                rowLock.readLock().unlock();
+            }
         }
     }
 
@@ -177,7 +186,7 @@ public class Table<Entity extends TableDefine<?>> implements TableHelper<Entity>
         return records.get(primaryKey);
     }
 
-    void putRecord(Record<?> record){
+    void putRecord(Record<?> record) {
         records.put(record.getPrimaryKey(), (Record<Entity>) record);
     }
 }

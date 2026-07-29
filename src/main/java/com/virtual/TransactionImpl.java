@@ -20,6 +20,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Lock;
 
 /**
  * 事物处理的具体实现
@@ -27,7 +28,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Slf4j
 public final class TransactionImpl implements Transaction {
 
-    private static ThreadPoolExecutor TRANSACTION_POOL = new ThreadPoolExecutor(10, 10, 0, TimeUnit.MICROSECONDS, new LinkedBlockingDeque<>(), new ThreadFactory() {
+    private static final int THREAD_NUM = 10;
+    private static ThreadPoolExecutor TRANSACTION_POOL = new ThreadPoolExecutor(THREAD_NUM, THREAD_NUM, 0, TimeUnit.MICROSECONDS, new LinkedBlockingDeque<>(), new ThreadFactory() {
         private static final AtomicInteger id = new AtomicInteger();
 
         @Override
@@ -100,7 +102,7 @@ public final class TransactionImpl implements Transaction {
                     copy.setVersion(copy.getVersion() + 1);
                     copy.getTable().putRecord(copy);
                     //todo 这里是直接序列化还是打标记，感觉打标记比较好，这里当前是写锁，并发不好，异步出去用读锁序列化可能效率更高
-                    Persistent.INSTANCE.getSnapshot().onChanged(entry.getKey(), copy);
+//                    Persistent.INSTANCE.getSnapshot().onChanged(entry.getKey(), copy);
                 }
             }
             // 再修改entity
@@ -139,17 +141,17 @@ public final class TransactionImpl implements Transaction {
     }
 
     private boolean checkAndLock() {
-        List<LockKey> queue = new ArrayList<>(records.size());
-        for (LockKey lockKey : records.keySet()) {
-            lockKey.writeLock();
-            queue.add(lockKey);
-            Record<TableDefine<?>> recordCopy = getRecord(lockKey);
+        List<Lock> queue = new ArrayList<>(records.size());
+        for (Record<?> recordCopy : records.values()) {
+            Lock lock = recordCopy.getRowLock().writeLock();
+            lock.lock();
+            queue.add(lock);
             Table<? extends TableDefine<?>> table = recordCopy.getTable();
             Record<? extends TableDefine<?>> record = table.getRecord(recordCopy.getPrimaryKey());
             if (record != null && record.getVersion() != recordCopy.getVersion()) {
                 // 版本号对不上了,释放之前所有的锁
                 for (int i = queue.size() - 1; i >= 0; i--) {
-                    queue.get(i).writUnlock();
+                    queue.get(i).unlock();
                 }
                 return false;
             }
@@ -158,8 +160,8 @@ public final class TransactionImpl implements Transaction {
     }
 
     private void releaseLock() {
-        for (LockKey lockKey : records.keySet()) {
-            lockKey.writUnlock();
+        for (Record<?> value : records.values()) {
+            value.getRowLock().writeLock().unlock();
         }
     }
 
@@ -185,9 +187,8 @@ public final class TransactionImpl implements Transaction {
         return (Log<T>) entityFieldLog.get(fieldName);
     }
 
-    public void recorded(Record<?> record) {
-        Table<? extends TableDefine<?>> table = record.getTable();
-        records.put(Locks.getOrCreateLockKey(table.getTableName(), record.getPrimaryKey()), record);
+    public void recorded(LockKey lockKey, Record<?> record) {
+        records.put(lockKey, record);
     }
 
     private void retry() {
@@ -198,11 +199,12 @@ public final class TransactionImpl implements Transaction {
         logs.clear();
 
         for (Map.Entry<LockKey, Record<?>> entry : records.entrySet()) {
-            entry.getKey().writeLock();
             Record<?> copy = entry.getValue();
+            copy.getRowLock().writeLock().lock();
             Table<? extends TableDefine<?>> table = copy.getTable();
-            Record<? extends TableDefine<?>> record = table.getRecord(copy.getPrimaryKey());
-            entry.setValue(record);
+            Record<? extends TableDefine<?>> newCopy = table.getRecord(copy.getPrimaryKey()).copy();
+            newCopy.bindLock(copy.getRowLock());
+            entry.setValue(newCopy);
         }
     }
 

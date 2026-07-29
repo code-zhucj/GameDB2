@@ -52,7 +52,7 @@ class GameDBTest {
     @Test
     void testEffect() throws ExecutionException, InterruptedException {
 //        new CreateUserLogic().submit();
-        int testNum = 100_000;
+        int testNum = 100_0000;
         int id = 100_000;
         long startTime = System.currentTimeMillis();
         Set<Integer> accounts = new HashSet<>();

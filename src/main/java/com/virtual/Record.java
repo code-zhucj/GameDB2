@@ -15,6 +15,8 @@ public class Record<T extends TableDefine<?>> {
     private Table<T> table;
     private Comparable<?> primaryKey;
 
+    private RowLock rowLock;
+
     public Record(State state, Table<T> table, Comparable<?> primaryKey) {
         this(state, 0, table, null, primaryKey);
     }
@@ -33,6 +35,14 @@ public class Record<T extends TableDefine<?>> {
 
     public Record<T> copy() {
         return new Record<>(state, version, table, entity, primaryKey);
+    }
+
+    public RowLock getRowLock() {
+        return this.rowLock;
+    }
+
+    void bindLock(RowLock rowLock) {
+        this.rowLock = rowLock;
     }
 
 
