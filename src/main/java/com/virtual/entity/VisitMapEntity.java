@@ -17,7 +17,7 @@ import java.util.TreeMap;
  * put 时对新值（集合类型）直接创建 VisitEntity 缓存，用 no-copy 引用（线程独享），减少后续 get 的拷贝开销。
  * @Create: 2026/7/19 2:18
  */
-public class VisitMapEntity<K, V> extends VisitEntity<Map<K, V>> implements Map<K, V> {
+public final class VisitMapEntity<K, V> extends VisitEntity<Map<K, V>> implements Map<K, V> {
 
     // ---- 构造 ----
 

@@ -9,7 +9,7 @@ import com.virtual.TableDefine;
  */
 public class MemoryClient implements PersistentClient {
     @Override
-    public <T extends TableDefine<?>> TableHelper<T> getHelper(String tableName, Class<T> tableClass) {
+    public <T extends TableDefine> TableHelper<T> getHelper(String tableName, Class<T> tableClass) {
         return new TableHelper<T>() {
             @Override
             public T select(Comparable<?> key) {

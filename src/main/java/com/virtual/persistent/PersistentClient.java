@@ -9,5 +9,5 @@ import com.virtual.TableDefine;
  */
 public interface PersistentClient {
 
-    <T extends TableDefine<?>> TableHelper<T> getHelper(String tableName, Class<T> tableClass);
+    <T extends TableDefine> TableHelper<T> getHelper(String tableName, Class<T> tableClass);
 }

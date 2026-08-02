@@ -33,11 +33,11 @@ public class MongoClient implements PersistentClient {
 
 
     @Override
-    public <T extends TableDefine<?>> TableHelper<T> getHelper(String tableName, Class<T> tableClass) {
+    public <T extends TableDefine> TableHelper<T> getHelper(String tableName, Class<T> tableClass) {
         return new MongoTableHelper<>(tableName, tableClass);
     }
 
-    private class MongoTableHelper<T extends TableDefine<?>> implements TableHelper<T> {
+    private class MongoTableHelper<T extends TableDefine> implements TableHelper<T> {
 
         private final MongoCollection<T> mongoCollection;
 

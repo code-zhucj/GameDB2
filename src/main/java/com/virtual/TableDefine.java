@@ -7,10 +7,10 @@ import com.virtual.entity.Entity;
  * @Description 表定义
  * @Create: 2026/5/25 22:28
  */
-public abstract class TableDefine<K extends Comparable<?>> extends Entity {
+public abstract class TableDefine extends Entity {
 
-    private byte state;
-
-    public abstract K primaryKey();
+    public Comparable<?> primaryKey() {
+        throw new UnsupportedOperationException("未定义主键");
+    }
 
 }

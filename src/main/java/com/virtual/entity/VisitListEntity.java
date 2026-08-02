@@ -15,7 +15,7 @@ import java.util.Set;
  * 用 no-copy 引用（线程独享），减少后续 get 的拷贝开销。
  * @Create: 2026/7/19 4:19
  */
-public class VisitListEntity<V> extends VisitEntity<List<V>> implements List<V> {
+public final class VisitListEntity<V> extends VisitEntity<List<V>> implements List<V> {
 
     // ---- 构造 ----
 

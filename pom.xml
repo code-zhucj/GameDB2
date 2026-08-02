@@ -89,17 +89,6 @@
                             </annotationProcessorPaths>
                         </configuration>
                     </execution>
-                    <execution>
-                        <id>default-testCompile</id>
-                        <goals><goal>testCompile</goal></goals>
-                        <configuration>
-                            <compilerArgs>
-                                <arg>--processor-path</arg>
-                                <arg>${settings.localRepository}/org/projectlombok/lombok/${lombok.version}/lombok-${lombok.version}.jar;${project.build.outputDirectory}</arg>
-                            </compilerArgs>
-                            <generatedTestSourcesDirectory>${project.build.directory}/generated-test-sources/test-annotations</generatedTestSourcesDirectory>
-                        </configuration>
-                    </execution>
                 </executions>
             </plugin>
 

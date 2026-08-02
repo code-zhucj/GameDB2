@@ -23,7 +23,7 @@ public enum Persistent implements AutoCloseable {
     }
 
     @SuppressWarnings("unchecked")
-    public <T extends TableDefine<?>> TableHelper<T> getTableHelper(String tableName, Class<T> tableClass) {
+    public <T extends TableDefine> TableHelper<T> getTableHelper(String tableName, Class<T> tableClass) {
         return (TableHelper<T>) persistentClient.getHelper(tableName, Tables.getProxyClass(tableClass));
     }
 

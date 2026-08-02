@@ -14,7 +14,7 @@ import java.util.TreeSet;
  * add 时对新值（集合类型）直接创建 VisitEntity 缓存，用 no-copy 引用（线程独享），减少后续遍历的拷贝开销。
  * @Create: 2026/7/19
  */
-public class VisitSetEntity<E> extends VisitEntity<Set<E>> implements Set<E> {
+public final class VisitSetEntity<E> extends VisitEntity<Set<E>> implements Set<E> {
 
     // ---- 构造 ----
 

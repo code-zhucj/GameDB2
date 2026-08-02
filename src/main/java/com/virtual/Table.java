@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
 @Slf4j
-public class Table<Entity extends TableDefine<?>> implements TableHelper<Entity> {
+public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
 
     private final Class<Entity> tableClass;
     private final Map<Comparable<?>, Record<Entity>> records = new ConcurrentHashMap<>();

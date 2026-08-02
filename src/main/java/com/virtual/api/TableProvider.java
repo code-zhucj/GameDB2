@@ -9,9 +9,9 @@ import com.virtual.TableDefine;
  */
 public interface TableProvider {
 
-    <E extends TableDefine<?>> E create(Class<? extends TableDefine<?>> tableClass);
+    <E extends TableDefine> E create(Class<? extends TableDefine> tableClass);
 
-    Class<? extends TableDefine<?>> getProxyClass(Class<? extends TableDefine<?>> tableClass);
+    Class<? extends TableDefine> getProxyClass(Class<? extends TableDefine> tableClass);
 
-    Iterable<Class<? extends TableDefine<?>>> allTableClass();
+    Iterable<Class<? extends TableDefine>> allTableClass();
 }

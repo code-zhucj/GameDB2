@@ -1,6 +1,7 @@
 package com.virtual.processor;
 
 import com.virtual.api.Entity;
+import com.virtual.api.Id;
 
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.RoundEnvironment;
@@ -52,7 +53,27 @@ public class EntityProxyProcessor extends AbstractProcessor {
             String proxyClassName = "_" + className;
 
             List<FieldMeta> fields = collectFieldMeta(typeElement);
-            String code = generateCode(packageName, className, proxyClassName, fields);
+
+            boolean isTableDefine = isTableDefineSubclass(typeElement);
+            FieldMeta idField = null;
+
+            if (isTableDefine) {
+                // TableDefine 子类必须标注 @Id
+                List<FieldMeta> idFields = fields.stream().filter(f -> f.isId).toList();
+                if (idFields.isEmpty()) {
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                            className + " 未标注 @Id 主键字段");
+                    continue;
+                }
+                if (idFields.size() > 1) {
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                            className + " 存在多个 @Id 主键字段");
+                    continue;
+                }
+                idField = idFields.get(0);
+            }
+
+            String code = generateCode(packageName, className, proxyClassName, fields, idField);
 
             try {
                 JavaFileObject sourceFile = processingEnv.getFiler().createSourceFile(
@@ -72,20 +93,32 @@ public class EntityProxyProcessor extends AbstractProcessor {
 
     private boolean shouldSkip(TypeElement type) {
         if (type.getQualifiedName().toString().equals("com.virtual.entity.Entity")) return true;
+        if (type.getModifiers().contains(javax.lang.model.element.Modifier.FINAL)) return true;
         if (type.getModifiers().contains(javax.lang.model.element.Modifier.ABSTRACT)) return true;
-        if (type.getSimpleName().toString().startsWith("_")) return true;
-        if (type.getQualifiedName().toString().startsWith("com.virtual.entity.Visit")) return true;
 
         // 手动遍历超类链，避免 TypeUtils.isSubtype 跨编译单元判断不一致的问题
         TypeMirror superclass = type.getSuperclass();
         while (superclass instanceof DeclaredType dt) {
             TypeElement superElem = (TypeElement) dt.asElement();
-            if (superElem.getQualifiedName().contentEquals("com.virtual.TableDefine")) {
-                return false; // 找到 TableDefine，不跳过
+            if (superElem.getQualifiedName().contentEquals("com.virtual.entity.Entity")) {
+                return false; // 找到 Entity，不跳过
             }
             superclass = superElem.getSuperclass();
         }
-        return true; // 未找到 TableDefine，跳过
+        return true; // 未找到 Entity，跳过
+    }
+
+    /** 判断是否继承 TableDefine（需要生成 primaryKey） */
+    private boolean isTableDefineSubclass(TypeElement type) {
+        TypeMirror superclass = type.getSuperclass();
+        while (superclass instanceof DeclaredType dt) {
+            TypeElement superElem = (TypeElement) dt.asElement();
+            if (superElem.getQualifiedName().contentEquals("com.virtual.TableDefine")) {
+                return true;
+            }
+            superclass = superElem.getSuperclass();
+        }
+        return false;
     }
 
     // ---- 字段收集 ----
@@ -102,7 +135,8 @@ public class EntityProxyProcessor extends AbstractProcessor {
             String name = field.getSimpleName().toString();
             TypeMirror fieldType = field.asType();
             FieldCategory cat = categorize(fieldType);
-            result.add(new FieldMeta(name, cat, fieldType));
+            boolean isId = field.getAnnotation(Id.class) != null;
+            result.add(new FieldMeta(name, cat, fieldType, isId));
         }
         return result;
     }
@@ -133,7 +167,7 @@ public class EntityProxyProcessor extends AbstractProcessor {
     // ---- 代码生成 ----
 
     private static String generateCode(String packageName, String className,
-                                        String proxyClassName, List<FieldMeta> fields) {
+                                        String proxyClassName, List<FieldMeta> fields, FieldMeta idField) {
         StringBuilder sb = new StringBuilder();
         sb.append("package ").append(packageName).append(";\n\n");
 
@@ -156,7 +190,16 @@ public class EntityProxyProcessor extends AbstractProcessor {
         sb.append("\n");
 
         sb.append("/** 由 EntityProxyProcessor 自动生成的代理类。 */\n");
-        sb.append("public class ").append(proxyClassName).append(" extends ").append(className).append(" {\n\n");
+        sb.append("public final class ").append(proxyClassName).append(" extends ").append(className).append(" {\n\n");
+
+        // TableDefine 子类：生成 primaryKey()，使用 @Id 字段的 getter
+        if (idField != null) {
+            String idGetter = "get" + capitalize(idField.name);
+            sb.append("    @Override\n");
+            sb.append("    public Comparable<?> primaryKey() {\n");
+            sb.append("        return ").append(idGetter).append("();\n");
+            sb.append("    }\n\n");
+        }
 
         for (FieldMeta f : fields) {
             generateGetter(sb, f);
@@ -317,11 +360,13 @@ public class EntityProxyProcessor extends AbstractProcessor {
         final String name;
         final FieldCategory category;
         final TypeMirror genericType;
+        final boolean isId;
 
-        FieldMeta(String name, FieldCategory category, TypeMirror genericType) {
+        FieldMeta(String name, FieldCategory category, TypeMirror genericType, boolean isId) {
             this.name = name;
             this.category = category;
             this.genericType = genericType;
+            this.isId = isId;
         }
     }
 }

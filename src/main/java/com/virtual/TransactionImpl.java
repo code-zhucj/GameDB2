@@ -76,7 +76,7 @@ public final class TransactionImpl implements Transaction {
     }
 
     public static Future<?> submit(Logic logic) {
-        return TRANSACTION_POOL.submit(new LogicFuture<>(logic));
+        return TRANSACTION_POOL.submit(new LogicFuture(logic));
     }
 
     public void log(Entity entity, String field, Log<?> log) {
@@ -124,14 +124,14 @@ public final class TransactionImpl implements Transaction {
     }
 
     @SuppressWarnings("unchecked")
-    <T extends TableDefine<?>> Record<T> getRecord(LockKey lockKey) {
+    <T extends TableDefine> Record<T> getRecord(LockKey lockKey) {
         return (Record<T>) records.get(lockKey);
     }
 
     private boolean visitValidVersion() {
         for (Record<?> recordCopy : records.values()) {
-            Table<? extends TableDefine<?>> table = recordCopy.getTable();
-            Record<? extends TableDefine<?>> record = table.getRecord(recordCopy.getPrimaryKey());
+            Table<? extends TableDefine> table = recordCopy.getTable();
+            Record<? extends TableDefine> record = table.getRecord(recordCopy.getPrimaryKey());
             if (record != null && record.getVersion() != recordCopy.getVersion()) {
                 return false;
             }
@@ -145,8 +145,8 @@ public final class TransactionImpl implements Transaction {
             Lock lock = recordCopy.getRowLock().writeLock();
             lock.lock();
             queue.add(lock);
-            Table<? extends TableDefine<?>> table = recordCopy.getTable();
-            Record<? extends TableDefine<?>> record = table.getRecord(recordCopy.getPrimaryKey());
+            Table<? extends TableDefine> table = recordCopy.getTable();
+            Record<? extends TableDefine> record = table.getRecord(recordCopy.getPrimaryKey());
             if (record != null && record.getVersion() != recordCopy.getVersion()) {
                 // 版本号对不上了,释放之前所有的锁
                 for (int i = queue.size() - 1; i >= 0; i--) {
@@ -203,44 +203,19 @@ public final class TransactionImpl implements Transaction {
         for (Map.Entry<LockKey, Record<?>> entry : records.entrySet()) {
             Record<?> copy = entry.getValue();
             copy.getRowLock().writeLock().lock();
-            Table<? extends TableDefine<?>> table = copy.getTable();
-            Record<? extends TableDefine<?>> newCopy = table.getRecord(copy.getPrimaryKey()).copy();
+            Table<? extends TableDefine> table = copy.getTable();
+            Record<? extends TableDefine> newCopy = table.getRecord(copy.getPrimaryKey()).copy();
             newCopy.bindLock(copy.getRowLock());
             entry.setValue(newCopy);
         }
     }
 
-    private static class LogicFuture<R> implements Future<R>, Runnable {
+    private static class LogicFuture implements Runnable {
 
         private Logic logic;
 
         public LogicFuture(Logic logic) {
             this.logic = logic;
-        }
-
-        @Override
-        public boolean cancel(boolean mayInterruptIfRunning) {
-            return false;
-        }
-
-        @Override
-        public boolean isCancelled() {
-            return false;
-        }
-
-        @Override
-        public boolean isDone() {
-            return false;
-        }
-
-        @Override
-        public R get() throws InterruptedException, ExecutionException {
-            return null;
-        }
-
-        @Override
-        public R get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
-            return null;
         }
 
         @Override

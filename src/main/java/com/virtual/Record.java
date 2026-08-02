@@ -7,7 +7,7 @@ import lombok.ToString;
 @Getter
 @Setter
 @ToString
-public class Record<T extends TableDefine<?>> {
+public class Record<T extends TableDefine> {
 
     private int version;
     private State state = State.DB;
