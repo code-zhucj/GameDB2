@@ -51,6 +51,15 @@ public class Tables {
         return info.factory().get();
     }
 
+    public static <T extends TableDefine> Supplier<T> creator(Class<T> entityClass) {
+        TableInfo<T> info = getTableInfo(entityClass);
+        if (info == null) {
+            throw new GameDBException("未注册的表: " + entityClass.getSimpleName());
+        }
+        return info.factory();
+    }
+
+
     public static Class<? extends TableDefine> getProxyClass(Class<? extends TableDefine> entityClass) {
         TableInfo<?> info = getTableInfo(entityClass);
         if (info == null) {

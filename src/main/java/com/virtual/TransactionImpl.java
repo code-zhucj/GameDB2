@@ -2,6 +2,7 @@ package com.virtual;
 
 import com.virtual.Log.Log;
 import com.virtual.entity.Entity;
+import com.virtual.persistent.Persistent;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -100,8 +101,7 @@ public final class TransactionImpl implements Transaction {
                 if (entities.contains(copy.getEntity())) {
                     copy.setVersion(copy.getVersion() + 1);
                     copy.getTable().putRecord(copy);
-                    //todo 这里是直接序列化还是打标记，感觉打标记比较好，这里当前是写锁，并发不好，异步出去用读锁序列化可能效率更高
-//                    Persistent.INSTANCE.getSnapshot().onChanged(entry.getKey(), copy);
+                    Persistent.INSTANCE.getSnapshot().onChanged(entry.getKey(), copy);
                 }
             }
             // 再修改entity

@@ -1,6 +1,7 @@
 package com.virtual.persistent;
 
 import com.virtual.TableDefine;
+import com.virtual.codec.Writer;
 
 /**
  * @author zhuchuanji

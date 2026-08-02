@@ -7,8 +7,15 @@ import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.ReplaceOptions;
 import com.virtual.TableDefine;
+import com.virtual.Tables;
+import com.virtual.codec.MongoReader;
+import com.virtual.codec.MongoWriter;
+import com.virtual.codec.Writer;
+import org.bson.RawBsonDocument;
 import org.bson.codecs.configuration.CodecRegistries;
 import org.bson.codecs.pojo.PojoCodecProvider;
+
+import java.util.function.Supplier;
 
 /**
  * @author zhuchuanji
@@ -25,8 +32,6 @@ public class MongoClient implements PersistentClient {
     public MongoClient() {
         com.mongodb.client.MongoClient mongoClient = MongoClients.create(MongoClientSettings
                 .builder()
-                .codecRegistry(CodecRegistries
-                        .fromProviders(PojoCodecProvider.builder().automatic(true).build()))
                 .build());
         this.mongoDatabase = mongoClient.getDatabase(database);
     }
@@ -39,15 +44,26 @@ public class MongoClient implements PersistentClient {
 
     private class MongoTableHelper<T extends TableDefine> implements TableHelper<T> {
 
-        private final MongoCollection<T> mongoCollection;
+        private final MongoCollection<RawBsonDocument> mongoCollection;
+        private final Supplier<T> creator;
 
         public MongoTableHelper(String tableName, Class<T> tableClass) {
-            this.mongoCollection = mongoDatabase.getCollection(tableName, tableClass);
+            this.mongoCollection = mongoDatabase.getCollection(tableName, RawBsonDocument.class);
+            this.creator = Tables.creator(tableClass);
         }
 
         @Override
         public T select(Comparable<?> key) {
-            return mongoCollection.find(Filters.eq(key)).first();
+            return decode(mongoCollection.find(Filters.eq(key)).first());
+        }
+
+        private T decode(RawBsonDocument rawBsonDocument) {
+            if (rawBsonDocument == null) {
+                return null;
+            }
+            T t = creator.get();
+            t.decode(new MongoReader(rawBsonDocument));
+            return t;
         }
 
         @Override
@@ -57,17 +73,31 @@ public class MongoClient implements PersistentClient {
 
         @Override
         public void insert(T t) {
-            mongoCollection.insertOne(t);
+            MongoWriter mongoWriter = new MongoWriter();
+            t.encode(mongoWriter);
+            insert(mongoWriter);
         }
 
         @Override
         public void update(T t) {
-            mongoCollection.replaceOne(Filters.eq(t.primaryKey()), t, REPLACE_OPTIONS);
+            MongoWriter mongoWriter = new MongoWriter();
+            t.encode(mongoWriter);
+            update(t.primaryKey(), mongoWriter);
+        }
+
+        @Override
+        public void insert(Writer t) {
+            mongoCollection.insertOne(((MongoWriter) t).toRawBsonDocument());
+        }
+
+        @Override
+        public void update(Comparable<?> key, Writer t) {
+            mongoCollection.replaceOne(Filters.eq(key), ((MongoWriter) t).toRawBsonDocument(), REPLACE_OPTIONS);
         }
 
         @Override
         public Iterable<T> selectByLimit(int cacheSize) {
-            return mongoCollection.find().limit(cacheSize);
+            return mongoCollection.find().limit(cacheSize).map(this::decode);
         }
     }
 }

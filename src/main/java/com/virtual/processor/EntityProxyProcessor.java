@@ -204,6 +204,13 @@ public class EntityProxyProcessor extends AbstractProcessor {
         if (hasMap) { sb.append("import com.virtual.entity.VisitMapEntity;\n"); sb.append("import java.util.Map;\n"); }
         if (hasList) { sb.append("import com.virtual.entity.VisitListEntity;\n"); sb.append("import java.util.List;\n"); }
         if (hasSet) { sb.append("import com.virtual.entity.VisitSetEntity;\n"); sb.append("import java.util.Set;\n"); }
+        // encode/decode 导入
+        sb.append("import com.virtual.codec.Writer;\n");
+        sb.append("import com.virtual.codec.Reader;\n");
+        boolean hasCollInDecode = hasMap || hasList || hasSet;
+        if (hasList || hasSet) sb.append("import java.util.ArrayList;\n");
+        if (hasSet) sb.append("import java.util.HashSet;\n");
+        if (hasMap) sb.append("import java.util.HashMap;\n");
         sb.append("\n");
 
         sb.append("/** 由 EntityProxyProcessor 自动生成的代理类。 */\n");
@@ -232,6 +239,11 @@ public class EntityProxyProcessor extends AbstractProcessor {
             generateSetter(sb, f);
             sb.append("\n");
         }
+
+        // encode / decode 覆写
+        generateEncode(sb, fields, proxyClassName);
+        generateDecode(sb, fields, proxyClassName);
+
         sb.append("}\n");
         return sb.toString();
     }
@@ -306,6 +318,298 @@ public class EntityProxyProcessor extends AbstractProcessor {
             }
         }
     }
+
+    // ---- encode / decode 生成 ----
+
+    private static void generateEncode(StringBuilder sb, List<FieldMeta> fields, String proxyClassName) {
+        sb.append("    @Override\n");
+        sb.append("    public void encode(Writer writer) {\n");
+        sb.append("        writer.writeStartDocument();\n");
+
+        for (FieldMeta f : fields) {
+            String getter = "get" + capitalize(f.name);
+            switch (f.category) {
+                case INT -> sb.append("        writer.writeInt32(\"").append(f.name)
+                        .append("\", super.").append(getter).append("());\n");
+                case LONG -> sb.append("        writer.writeInt64(\"").append(f.name)
+                        .append("\", super.").append(getter).append("());\n");
+                case STRING -> {
+                    sb.append("        {\n");
+                    sb.append("            String v = super.").append(getter).append("();\n");
+                    sb.append("            if (v != null) writer.writeString(\"").append(f.name)
+                            .append("\", v);\n");
+                    sb.append("        }\n");
+                }
+                case ENTITY -> {
+                    String t = typeName(f.genericType);
+                    sb.append("        {\n");
+                    sb.append("            ").append(t).append(" v = super.").append(getter).append("();\n");
+                    sb.append("            if (v != null) {\n");
+                    sb.append("                writer.writeName(\"").append(f.name).append("\");\n");
+                    sb.append("                v.encode(writer);\n");
+                    sb.append("            }\n");
+                    sb.append("        }\n");
+                }
+                case LIST, SET -> generateCollectionEncode(sb, f, getter);
+                case MAP -> generateMapEncode(sb, f, getter);
+                case OTHER -> { /* skip */ }
+            }
+        }
+
+        sb.append("        writer.writeEndDocument();\n");
+        sb.append("    }\n\n");
+    }
+
+    /** 为 List/Set 字段生成 encode 代码 */
+    private static void generateCollectionEncode(StringBuilder sb, FieldMeta f, String getter) {
+        CollectionElem elem = getCollectionElem(f.genericType);
+        String collType = typeName(f.genericType);
+        sb.append("        {\n");
+        sb.append("            ").append(collType).append(" coll = super.").append(getter).append("();\n");
+        sb.append("            if (coll != null && !coll.isEmpty()) {\n");
+        sb.append("                writer.writeStartArray(\"").append(f.name).append("\");\n");
+        if (elem != null) {
+            switch (elem.category()) {
+                case INT -> sb.append("                for (int it : (Iterable<Integer>) coll) writer.writeInt32(it);\n");
+                case LONG -> sb.append("                for (long it : (Iterable<Long>) coll) writer.writeInt64(it);\n");
+                case STRING -> sb.append("                for (String it : (Iterable<String>) coll) writer.writeString(it);\n");
+                case ENTITY -> {
+                    sb.append("                for (").append(elem.typeName()).append(" it : (Iterable<")
+                            .append(elem.typeName()).append(">) coll) {\n");
+                    sb.append("                    it.encode(writer);\n");
+                    sb.append("                }\n");
+                }
+                default -> sb.append("                // unsupported element type\n");
+            }
+        }
+        sb.append("                writer.writeEndArray();\n");
+        sb.append("            }\n");
+        sb.append("        }\n");
+    }
+
+    /** 为 Map 字段生成 encode 代码 */
+    private static void generateMapEncode(StringBuilder sb, FieldMeta f, String getter) {
+        MapElem map = getMapElem(f.genericType);
+        String collType = typeName(f.genericType);
+        sb.append("        {\n");
+        sb.append("            ").append(collType).append(" map = super.").append(getter).append("();\n");
+        sb.append("            if (map != null && !map.isEmpty()) {\n");
+        sb.append("                writer.writeStartArray(\"").append(f.name).append("\");\n");
+        if (map != null) {
+            sb.append("                for (java.util.Map.Entry<?,?> e : map.entrySet()) {\n");
+            sb.append("                    writer.writeStartDocument();\n");
+            writeMapEntry(sb, map.key(), "e.getKey()", false);
+            writeMapEntry(sb, map.value(), "e.getValue()", true);
+            sb.append("                    writer.writeEndDocument();\n");
+            sb.append("                }\n");
+        }
+        sb.append("                writer.writeEndArray();\n");
+        sb.append("            }\n");
+        sb.append("        }\n");
+    }
+
+    private static void writeMapEntry(StringBuilder sb, Object elem, String expr, boolean isValue) {
+        String name = isValue ? "v" : "k";
+        if (elem instanceof CollectionElem ce) {
+            switch (ce.category()) {
+                case INT -> sb.append("                    writer.writeInt32(\"").append(name)
+                        .append("\", (Integer)").append(expr).append(");\n");
+                case LONG -> sb.append("                    writer.writeInt64(\"").append(name)
+                        .append("\", (Long)").append(expr).append(");\n");
+                case STRING -> sb.append("                    writer.writeString(\"").append(name)
+                        .append("\", (String)").append(expr).append(");\n");
+                case ENTITY -> {
+                    sb.append("                    writer.writeName(\"").append(name).append("\");\n");
+                    sb.append("                    ((").append(ce.typeName()).append(")").append(expr).append(").encode(writer);\n");
+                }
+                default -> sb.append("                    // unsupported\n");
+            }
+        }
+    }
+
+    private static void generateDecode(StringBuilder sb, List<FieldMeta> fields, String proxyClassName) {
+        sb.append("    @Override\n");
+        sb.append("    public void decode(Reader reader) {\n");
+        sb.append("        reader.readStartDocument();\n");
+        sb.append("        while (reader.readBsonType() != Reader.END_OF_DOCUMENT) {\n");
+        sb.append("            String fieldName = reader.readName();\n");
+        sb.append("            switch (fieldName) {\n");
+
+        for (FieldMeta f : fields) {
+            sb.append("                case \"").append(f.name).append("\": ");
+            String setter = "set" + capitalize(f.name);
+            switch (f.category) {
+                case INT -> sb.append("super.").append(setter).append("(reader.readInt32()); break;\n");
+                case LONG -> sb.append("super.").append(setter).append("(reader.readInt64()); break;\n");
+                case STRING -> sb.append("super.").append(setter).append("(reader.readString()); break;\n");
+                case ENTITY -> {
+                    String tn = typeName(f.genericType);
+                    sb.append("{\n");
+                    sb.append("                    _").append(tn).append(" v = new _").append(tn).append("();\n");
+                    sb.append("                    v.decode(reader);\n");
+                    sb.append("                    super.").append(setter).append("(v);\n");
+                    sb.append("                }\n");
+                    sb.append("                break;\n");
+                }
+                case LIST, SET -> generateCollectionDecode(sb, f, setter);
+                case MAP -> generateMapDecode(sb, f, setter);
+                case OTHER -> sb.append("reader.skipValue(); break;\n");
+            }
+        }
+
+        sb.append("                default: reader.skipValue(); break;\n");
+        sb.append("            }\n");
+        sb.append("        }\n");
+        sb.append("        reader.readEndDocument();\n");
+        sb.append("    }\n\n");
+    }
+
+    private static void generateCollectionDecode(StringBuilder sb, FieldMeta f, String setter) {
+        CollectionElem elem = getCollectionElem(f.genericType);
+        String elemType = elem != null ? elem.typeName() : "Object";
+        sb.append("{\n");
+        sb.append("                    reader.readStartArray();\n");
+        if (f.category == FieldCategory.LIST) {
+            sb.append("                    java.util.ArrayList<").append(elemType)
+                    .append("> list = new ArrayList<>();\n");
+        } else {
+            sb.append("                    java.util.HashSet<").append(elemType)
+                    .append("> set = new HashSet<>();\n");
+        }
+        sb.append("                    while (reader.readBsonType() != Reader.END_OF_DOCUMENT) {\n");
+        sb.append("                        reader.readName(); // skip array index\n");
+        if (elem != null) {
+            switch (elem.category()) {
+                case INT -> {
+                    String coll = f.category == FieldCategory.LIST ? "list" : "set";
+                    sb.append("                        ").append(coll).append(".add(reader.readInt32());\n");
+                }
+                case LONG -> {
+                    String coll = f.category == FieldCategory.LIST ? "list" : "set";
+                    sb.append("                        ").append(coll).append(".add(reader.readInt64());\n");
+                }
+                case STRING -> {
+                    String coll = f.category == FieldCategory.LIST ? "list" : "set";
+                    sb.append("                        ").append(coll).append(".add(reader.readString());\n");
+                }
+                case ENTITY -> {
+                    sb.append("                        _").append(elemType).append(" elem = new _")
+                            .append(elemType).append("();\n");
+                    sb.append("                        elem.decode(reader);\n");
+                    String coll = f.category == FieldCategory.LIST ? "list" : "set";
+                    sb.append("                        ").append(coll).append(".add(elem);\n");
+                }
+                default -> sb.append("                        reader.skipValue();\n");
+            }
+        } else {
+            sb.append("                        reader.skipValue();\n");
+        }
+        sb.append("                    }\n");
+        sb.append("                    reader.readEndArray();\n");
+        String coll = f.category == FieldCategory.LIST ? "list" : "set";
+        sb.append("                    super.").append(setter).append("(").append(coll).append(");\n");
+        sb.append("                }\n");
+        sb.append("                break;\n");
+    }
+
+    private static void generateMapDecode(StringBuilder sb, FieldMeta f, String setter) {
+        MapElem map = getMapElem(f.genericType);
+        String keyType = map != null && map.key() != null ? map.key().typeName() : "Object";
+        String valType = map != null && map.value() != null ? map.value().typeName() : "Object";
+        sb.append("{\n");
+        sb.append("                    reader.readStartArray();\n");
+        sb.append("                    HashMap<").append(keyType).append(",").append(valType)
+                .append("> m = new HashMap<>();\n");
+        sb.append("                    while (reader.readBsonType() != Reader.END_OF_DOCUMENT) {\n");
+        sb.append("                        reader.readStartDocument();\n");
+        sb.append("                        ").append(keyType).append(" k = null;\n");
+        sb.append("                        ").append(valType).append(" v = null;\n");
+        sb.append("                        while (reader.readBsonType() != Reader.END_OF_DOCUMENT) {\n");
+        sb.append("                            String entryKey = reader.readName();\n");
+        sb.append("                            switch (entryKey) {\n");
+        sb.append("                                case \"k\": ");
+        readMapValue(sb, map != null ? map.key() : null, "k");
+        sb.append("                                case \"v\": ");
+        readMapValue(sb, map != null ? map.value() : null, "v");
+        sb.append("                                default: reader.skipValue(); break;\n");
+        sb.append("                            }\n");
+        sb.append("                        }\n");
+        sb.append("                        reader.readEndDocument();\n");
+        sb.append("                        if (k != null) m.put(k, v);\n");
+        sb.append("                    }\n");
+        sb.append("                    reader.readEndArray();\n");
+        sb.append("                    super.").append(setter).append("(m);\n");
+        sb.append("                }\n");
+        sb.append("                break;\n");
+    }
+
+    private static void readMapValue(StringBuilder sb, Object elem, String var) {
+        if (elem instanceof CollectionElem ce) {
+            switch (ce.category()) {
+                case INT -> sb.append(var).append(" = reader.readInt32(); break;\n");
+                case LONG -> sb.append(var).append(" = reader.readInt64(); break;\n");
+                case STRING -> sb.append(var).append(" = reader.readString(); break;\n");
+                case ENTITY -> {
+                    sb.append("{\n");
+                    sb.append("                                _").append(ce.typeName()).append(" obj = new _")
+                            .append(ce.typeName()).append("();\n");
+                    sb.append("                                obj.decode(reader);\n");
+                    sb.append("                                ").append(var).append(" = obj;\n");
+                    sb.append("                            }\n");
+                    sb.append("                            break;\n");
+                }
+                default -> sb.append("reader.skipValue(); break;\n");
+            }
+        } else {
+            sb.append("reader.skipValue(); break;\n");
+        }
+    }
+
+    // ---- 集合元素类型提取 ----
+
+    /** List/Set 的元素类型信息 */
+    private static CollectionElem getCollectionElem(TypeMirror collType) {
+        if (collType instanceof javax.lang.model.type.DeclaredType dt) {
+            List<? extends TypeMirror> args = dt.getTypeArguments();
+            if (args.size() >= 1) {
+                return categoryOf(args.get(0));
+            }
+        }
+        return null;
+    }
+
+    /** Map 的 key/value 类型信息 */
+    private static MapElem getMapElem(TypeMirror collType) {
+        if (collType instanceof javax.lang.model.type.DeclaredType dt) {
+            List<? extends TypeMirror> args = dt.getTypeArguments();
+            if (args.size() >= 2) {
+                return new MapElem(categoryOf(args.get(0)), categoryOf(args.get(1)));
+            }
+        }
+        return null;
+    }
+
+    private static CollectionElem categoryOf(TypeMirror type) {
+        if (type.getKind() == javax.lang.model.type.TypeKind.INT)
+            return new CollectionElem(FieldCategory.INT, "Integer");
+        if (type.getKind() == javax.lang.model.type.TypeKind.LONG)
+            return new CollectionElem(FieldCategory.LONG, "Long");
+        if (type instanceof javax.lang.model.type.DeclaredType dt) {
+            javax.lang.model.element.TypeElement elem =
+                    (javax.lang.model.element.TypeElement) dt.asElement();
+            if (elem.getQualifiedName().contentEquals("java.lang.String"))
+                return new CollectionElem(FieldCategory.STRING, "String");
+            if (elem.getQualifiedName().contentEquals("java.lang.Integer"))
+                return new CollectionElem(FieldCategory.INT, "Integer");
+            if (elem.getQualifiedName().contentEquals("java.lang.Long"))
+                return new CollectionElem(FieldCategory.LONG, "Long");
+            return new CollectionElem(FieldCategory.ENTITY, elem.getSimpleName().toString());
+        }
+        return null;
+    }
+
+    private record CollectionElem(FieldCategory category, String typeName) {}
+    private record MapElem(CollectionElem key, CollectionElem value) {}
 
     // ---- 类型名工具 ----
 

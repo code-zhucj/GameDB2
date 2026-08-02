@@ -3,9 +3,11 @@ package com.virtual.persistent;
 import com.virtual.LockKey;
 import com.virtual.Record;
 import com.virtual.RowLock;
+import com.virtual.codec.MongoWriter;
+import com.virtual.codec.Writer;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
-import com.virtual.codec.Writer;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,9 +28,11 @@ public class Snapshot extends Thread implements AutoCloseable {
     private final AtomicBoolean lock = new AtomicBoolean(true); // 快照锁
     private final Map<LockKey, Record<?>> changed = new ConcurrentHashMap<>();
     private final Map<LockKey, Record<?>> _changed = new ConcurrentHashMap<>();
-    private Map<LockKey, Writer> snapshot = new HashMap<>(); // 只会被快照线程读写
+    private Map<LockKey, Operation> snapshot = new HashMap<>(); // 只会被快照线程读写
     private long nextSnapshotTime = System.currentTimeMillis(); // 下一次快照时间
     private volatile boolean running = true;
+    @Getter
+    private volatile boolean end = false;
 
     public Snapshot() {
         super("snapshot");
@@ -54,7 +58,7 @@ public class Snapshot extends Thread implements AutoCloseable {
 
         // 将快照列表丢该flash线程,上一步已经保证了snapshot 中为某一时刻服务器的安全快照，之后的落库交给flash线程慢慢处理就行了
         Persistent.INSTANCE.getFlash().addTask(snapshot); // 这里的快照就是当前时刻内存页内的数据快照
-        snapshot = new HashMap<>(); // 清空快照列表
+        snapshot = HashMap.newHashMap(snapshot.size()); // 清空快照列表
     }
 
     private void serialization(Map<LockKey, Record<?>> changed) {
@@ -70,12 +74,11 @@ public class Snapshot extends Thread implements AutoCloseable {
                     Record<?> copy = changed.remove(entry.getKey());
                     if (copy.getState() == Record.State.DELETE) {
                         // 不用序列化了
-                        snapshot.put(entry.getKey(), null);
+                        snapshot.put(entry.getKey(), new Operation(copy.getTable(), copy.getState(), null));
                     } else {
-                        // 通常来讲,序列化这一步不会出问题了,毕竟序列化逻辑都是代码生成的
-//                        Writer writer = new Writer();
-//                        copy.getEntity().encode(writer);
-//                        snapshot.put(entry.getKey(), writer);
+                        Writer writer = new MongoWriter();
+                        copy.getEntity().encode(writer);
+                        snapshot.put(entry.getKey(), new Operation(copy.getTable(), copy.getState(), writer));
                     }
                     log.debug("打个快照 {}", entry.getValue());
                 } finally {
@@ -91,13 +94,17 @@ public class Snapshot extends Thread implements AutoCloseable {
         while (running || !changed.isEmpty()) {
             if (System.nanoTime() >= this.nextSnapshotTime) {
                 this.nextSnapshotTime = this.nextSnapshotTime + PERIOD;
+                long startTime = System.currentTimeMillis();
+                log.info("snapshot start time {}", startTime);
                 snapshot();
+                log.info("snapshot start end {}, cost {}", System.currentTimeMillis(), System.currentTimeMillis() - startTime);
                 long waitTime = this.nextSnapshotTime - System.currentTimeMillis();
                 if (waitTime > 0) {
                     LockSupport.parkNanos(waitTime);
                 }
             }
         }
+        end = true;
     }
 
     @Override

@@ -1,5 +1,7 @@
 package com.virtual.persistent;
 
+import com.virtual.codec.Writer;
+
 /**
  * @author zhuchuanji
  * @Description 表相关操作
@@ -16,4 +18,7 @@ public interface TableHelper<T> {
     void update(T t);
 
     Iterable<T> selectByLimit(int cacheSize);
+
+    default void insert(Writer writer){}
+    default void update(Comparable<?> key, Writer writer){}
 }
