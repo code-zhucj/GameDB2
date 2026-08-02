@@ -18,10 +18,10 @@ public class Flash extends Thread {
     @Override
     public void run() {
         Snapshot snapshot = Persistent.INSTANCE.getSnapshot();
-        while (!snapshot.isEnd()) {
+        while (!snapshot.isEnd() || !tasks.isEmpty()) {
             Map<LockKey, Operation> poll = tasks.poll();
             if (poll == null) {
-                return;
+                continue;
             }
             for (Map.Entry<LockKey, Operation> entry : poll.entrySet()) {
                 Operation value = entry.getValue();

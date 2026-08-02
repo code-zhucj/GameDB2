@@ -29,7 +29,7 @@ import java.util.concurrent.locks.Lock;
 public final class TransactionImpl implements Transaction {
 
     private static final int THREAD_NUM = 10;
-    private static ThreadPoolExecutor TRANSACTION_POOL = new ThreadPoolExecutor(THREAD_NUM, THREAD_NUM, 0, TimeUnit.MICROSECONDS, new LinkedBlockingDeque<>(), new ThreadFactory() {
+    public static ThreadPoolExecutor TRANSACTION_POOL = new ThreadPoolExecutor(THREAD_NUM, THREAD_NUM, 0, TimeUnit.MICROSECONDS, new LinkedBlockingDeque<>(), new ThreadFactory() {
         private static final AtomicInteger id = new AtomicInteger();
 
         @Override

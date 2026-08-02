@@ -241,8 +241,8 @@ public class EntityProxyProcessor extends AbstractProcessor {
         }
 
         // encode / decode 覆写
-        generateEncode(sb, fields, proxyClassName);
-        generateDecode(sb, fields, proxyClassName);
+        generateEncode(sb, fields, idField);
+        generateDecode(sb, fields, idField);
 
         sb.append("}\n");
         return sb.toString();
@@ -321,22 +321,23 @@ public class EntityProxyProcessor extends AbstractProcessor {
 
     // ---- encode / decode 生成 ----
 
-    private static void generateEncode(StringBuilder sb, List<FieldMeta> fields, String proxyClassName) {
+    private static void generateEncode(StringBuilder sb, List<FieldMeta> fields, FieldMeta idField) {
         sb.append("    @Override\n");
         sb.append("    public void encode(Writer writer) {\n");
         sb.append("        writer.writeStartDocument();\n");
 
         for (FieldMeta f : fields) {
+            String fieldName = f.isId ? "_id" : f.name;
             String getter = "get" + capitalize(f.name);
             switch (f.category) {
-                case INT -> sb.append("        writer.writeInt32(\"").append(f.name)
+                case INT -> sb.append("        writer.writeInt32(\"").append(fieldName)
                         .append("\", super.").append(getter).append("());\n");
-                case LONG -> sb.append("        writer.writeInt64(\"").append(f.name)
+                case LONG -> sb.append("        writer.writeInt64(\"").append(fieldName)
                         .append("\", super.").append(getter).append("());\n");
                 case STRING -> {
                     sb.append("        {\n");
                     sb.append("            String v = super.").append(getter).append("();\n");
-                    sb.append("            if (v != null) writer.writeString(\"").append(f.name)
+                    sb.append("            if (v != null) writer.writeString(\"").append(fieldName)
                             .append("\", v);\n");
                     sb.append("        }\n");
                 }
@@ -345,7 +346,7 @@ public class EntityProxyProcessor extends AbstractProcessor {
                     sb.append("        {\n");
                     sb.append("            ").append(t).append(" v = super.").append(getter).append("();\n");
                     sb.append("            if (v != null) {\n");
-                    sb.append("                writer.writeName(\"").append(f.name).append("\");\n");
+                    sb.append("                writer.writeName(\"").append(fieldName).append("\");\n");
                     sb.append("                v.encode(writer);\n");
                     sb.append("            }\n");
                     sb.append("        }\n");
@@ -367,7 +368,8 @@ public class EntityProxyProcessor extends AbstractProcessor {
         sb.append("        {\n");
         sb.append("            ").append(collType).append(" coll = super.").append(getter).append("();\n");
         sb.append("            if (coll != null && !coll.isEmpty()) {\n");
-        sb.append("                writer.writeStartArray(\"").append(f.name).append("\");\n");
+        String fieldName = f.isId ? "_id" : f.name;
+        sb.append("                writer.writeStartArray(\"").append(fieldName).append("\");\n");
         if (elem != null) {
             switch (elem.category()) {
                 case INT -> sb.append("                for (int it : (Iterable<Integer>) coll) writer.writeInt32(it);\n");
@@ -394,7 +396,8 @@ public class EntityProxyProcessor extends AbstractProcessor {
         sb.append("        {\n");
         sb.append("            ").append(collType).append(" map = super.").append(getter).append("();\n");
         sb.append("            if (map != null && !map.isEmpty()) {\n");
-        sb.append("                writer.writeStartArray(\"").append(f.name).append("\");\n");
+        String mapFieldName = f.isId ? "_id" : f.name;
+        sb.append("                writer.writeStartArray(\"").append(mapFieldName).append("\");\n");
         if (map != null) {
             sb.append("                for (java.util.Map.Entry<?,?> e : map.entrySet()) {\n");
             sb.append("                    writer.writeStartDocument();\n");
@@ -427,7 +430,7 @@ public class EntityProxyProcessor extends AbstractProcessor {
         }
     }
 
-    private static void generateDecode(StringBuilder sb, List<FieldMeta> fields, String proxyClassName) {
+    private static void generateDecode(StringBuilder sb, List<FieldMeta> fields, FieldMeta idField) {
         sb.append("    @Override\n");
         sb.append("    public void decode(Reader reader) {\n");
         sb.append("        reader.readStartDocument();\n");
@@ -436,7 +439,8 @@ public class EntityProxyProcessor extends AbstractProcessor {
         sb.append("            switch (fieldName) {\n");
 
         for (FieldMeta f : fields) {
-            sb.append("                case \"").append(f.name).append("\": ");
+            String fieldName = f.isId ? "_id" : f.name;
+            sb.append("                case \"").append(fieldName).append("\": ");
             String setter = "set" + capitalize(f.name);
             switch (f.category) {
                 case INT -> sb.append("super.").append(setter).append("(reader.readInt32()); break;\n");

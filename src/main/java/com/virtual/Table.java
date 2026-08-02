@@ -43,14 +43,13 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
      * 只允许开服的时候调用一次,这里应该只对需要全缓存的表进行加载
      */
     public void loadFromDB() {
-        tableLock.lock();
-        try {
+        Logic loadData = () -> {
             Iterable<? extends Entity> iterator = tableHelper.selectByLimit(cacheSize);
             iterator.forEach(entity -> records.put(entity.primaryKey(), new Record<>(Record.State.DB, this, entity)));
             log.info("table {} load from DB, count: {}", tableName, records.size());
-        } catch (Exception e) {
-            tableLock.unlock();
-        }
+            return Logic.State.SUCCESS;
+        };
+        loadData.submit();
     }
 
     @Override

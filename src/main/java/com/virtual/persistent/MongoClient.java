@@ -1,11 +1,14 @@
 package com.virtual.persistent;
 
+import com.mongodb.ConnectionString;
 import com.mongodb.MongoClientSettings;
+import com.mongodb.MongoCredential;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.ReplaceOptions;
+import com.mongodb.client.result.InsertOneResult;
 import com.virtual.TableDefine;
 import com.virtual.Tables;
 import com.virtual.codec.MongoReader;
@@ -15,6 +18,7 @@ import org.bson.RawBsonDocument;
 import org.bson.codecs.configuration.CodecRegistries;
 import org.bson.codecs.pojo.PojoCodecProvider;
 
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 /**
@@ -30,8 +34,14 @@ public class MongoClient implements PersistentClient {
     private static final ReplaceOptions REPLACE_OPTIONS = new ReplaceOptions().upsert(true);
 
     public MongoClient() {
-        com.mongodb.client.MongoClient mongoClient = MongoClients.create(MongoClientSettings
-                .builder()
+        com.mongodb.client.MongoClient mongoClient = MongoClients.create(MongoClientSettings.builder()
+                .applyConnectionString(new ConnectionString("mongodb://localhost"))
+                .credential(MongoCredential.createCredential("root", "admin", "root".toCharArray()))
+                .applyToConnectionPoolSettings(builder -> {
+                    builder.maxSize(10)
+                            .minSize(5)
+                            .maxWaitTime(30_000, TimeUnit.MILLISECONDS);
+                })
                 .build());
         this.mongoDatabase = mongoClient.getDatabase(database);
     }

@@ -1,7 +1,7 @@
 package com.virtual.persistent;
 
 import com.virtual.TableDefine;
-import com.virtual.Tables;
+import com.virtual.TransactionImpl;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
@@ -28,17 +28,18 @@ public enum Persistent {
             @Override
             public void run() {
                 log.info("关闭前需要等待snapshot和flash无任务");
-                while (snapshot.isEnd() || !flash.isEnd()) {
-                    LockSupport.parkNanos(1000_000);
+                snapshot.close();
+                TransactionImpl.TRANSACTION_POOL.close();
+                while (!snapshot.isEnd() || !flash.isEnd()) {
+                    LockSupport.parkNanos(1_000_000_000);
                 }
                 log.info("安全关闭");
             }
         });
     }
 
-    @SuppressWarnings("unchecked")
     public <T extends TableDefine> TableHelper<T> getTableHelper(String tableName, Class<T> tableClass) {
-        return (TableHelper<T>) persistentClient.getHelper(tableName, Tables.getProxyClass(tableClass));
+        return persistentClient.getHelper(tableName, tableClass);
     }
 
 
