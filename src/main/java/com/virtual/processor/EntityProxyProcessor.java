@@ -16,7 +16,9 @@ import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
+import javax.tools.FileObject;
 import javax.tools.JavaFileObject;
+import javax.tools.StandardLocation;
 import java.io.IOException;
 import java.io.Writer;
 import java.util.ArrayList;
@@ -73,17 +75,30 @@ public class EntityProxyProcessor extends AbstractProcessor {
                 idField = idFields.get(0);
             }
 
-            String code = generateCode(packageName, className, proxyClassName, fields, idField);
-
+            // 生成代理类
+            String proxyCode = generateProxyCode(packageName, className, proxyClassName, fields, idField, isTableDefine);
             try {
                 JavaFileObject sourceFile = processingEnv.getFiler().createSourceFile(
                         packageName + "." + proxyClassName, typeElement);
                 try (Writer writer = sourceFile.openWriter()) {
-                    writer.write(code);
+                    writer.write(proxyCode);
                 }
             } catch (IOException e) {
                 processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
                         "生成 " + proxyClassName + " 失败: " + e.getMessage());
+            }
+
+            // TableDefine 子类写入独立的标记文件，互不覆盖
+            if (isTableDefine) {
+                try {
+                    String fqn = packageName + "." + proxyClassName;
+                    FileObject file = processingEnv.getFiler().createResource(
+                            StandardLocation.CLASS_OUTPUT, "", "META-INF/tables/" + fqn);
+                    file.openWriter().close(); // 空文件即可，仅用作标记
+                } catch (IOException e) {
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING,
+                            "写入标记文件失败: " + e.getMessage());
+                }
             }
         }
         return false;
@@ -166,8 +181,9 @@ public class EntityProxyProcessor extends AbstractProcessor {
 
     // ---- 代码生成 ----
 
-    private static String generateCode(String packageName, String className,
-                                        String proxyClassName, List<FieldMeta> fields, FieldMeta idField) {
+    private static String generateProxyCode(String packageName, String className,
+                                        String proxyClassName, List<FieldMeta> fields,
+                                        FieldMeta idField, boolean isTableDefine) {
         StringBuilder sb = new StringBuilder();
         sb.append("package ").append(packageName).append(";\n\n");
 
@@ -180,6 +196,7 @@ public class EntityProxyProcessor extends AbstractProcessor {
             }
         }
 
+        if (isTableDefine) sb.append("import com.virtual.Tables;\n");
         sb.append("import com.virtual.Log.Log;\n");
         sb.append("import com.virtual.Log.SimpleLog;\n");
         sb.append("import com.virtual.TransactionImpl;\n");
@@ -191,6 +208,14 @@ public class EntityProxyProcessor extends AbstractProcessor {
 
         sb.append("/** 由 EntityProxyProcessor 自动生成的代理类。 */\n");
         sb.append("public final class ").append(proxyClassName).append(" extends ").append(className).append(" {\n\n");
+
+        // TableDefine 子类：static 块注册到 Tables
+        if (isTableDefine) {
+            sb.append("    static {\n");
+            sb.append("        Tables.register(").append(className).append(".class, ")
+                    .append(proxyClassName).append(".class, ").append(proxyClassName).append("::new);\n");
+            sb.append("    }\n\n");
+        }
 
         // TableDefine 子类：生成 primaryKey()，使用 @Id 字段的 getter
         if (idField != null) {

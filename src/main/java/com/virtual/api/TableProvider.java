@@ -13,5 +13,5 @@ public interface TableProvider {
 
     Class<? extends TableDefine> getProxyClass(Class<? extends TableDefine> tableClass);
 
-    Iterable<Class<? extends TableDefine>> allTableClass();
+    Iterable<? extends Class<? extends TableDefine>> allTableClass();
 }
