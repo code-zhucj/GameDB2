@@ -2,7 +2,7 @@ package com.virtual.Log;
 
 import java.util.function.Consumer;
 
-public abstract class SimpleLog<V> implements Log<V> {
+public class SimpleLog<V> implements Log<V> {
     private V v;
     private Consumer<V> consumer;
 

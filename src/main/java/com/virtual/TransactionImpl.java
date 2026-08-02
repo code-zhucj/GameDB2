@@ -2,7 +2,6 @@ package com.virtual;
 
 import com.virtual.Log.Log;
 import com.virtual.entity.Entity;
-import com.virtual.persistent.Persistent;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -168,6 +167,9 @@ public final class TransactionImpl implements Transaction {
     @Override
     public void rollback() {
         transactions.removeLast().rollbackTask.forEach(Runnable::run); // 直接丢弃
+        if (transactions.isEmpty()) {
+            CURRENT.remove();
+        }
     }
 
     public void addCommitTask(Runnable r) {

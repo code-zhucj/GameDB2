@@ -4,6 +4,7 @@ import com.virtual.GameDBException;
 import com.virtual.codec.Codec;
 import lombok.Setter;
 
+@com.virtual.api.Entity
 public abstract class Entity implements Codec {
 
     @Setter

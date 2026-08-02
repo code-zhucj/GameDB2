@@ -55,7 +55,6 @@ public class Table<Entity extends TableDefine<?>> implements TableHelper<Entity>
     @Override
     public void insert(Entity entity) {
         // todo 这里的主键先让用户自己设置,后续补充自增主键
-        entity.setInitComplete();
         validPrimaryKey(entity.primaryKey());
         TransactionImpl transaction = TransactionImpl.checkAndGet();
         RowLock rowLock = Locks.getLock(new LockKey(getTableName(), entity.primaryKey()));
