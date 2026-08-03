@@ -93,17 +93,22 @@ public final class TransactionImpl implements Transaction {
             if (!checkAndLock()) {
                 throw new GameDBException(); // todo 这里先抛异常
             }
-            Set<Entity> entities = new HashSet<>();
+            Set<Entity> entities = HashSet.newHashSet(logs.size());
             logs.keySet().forEach(entity -> entities.add(entity.getRoot()));
+            Map<LockKey, Record<?>> transactionPack = HashMap.newHashMap(entities.size());
             // 先设置版本号
             for (Map.Entry<LockKey, Record<?>> entry : records.entrySet()) {
                 Record<?> copy = entry.getValue();
                 if (entities.contains(copy.getEntity())) {
                     copy.setVersion(copy.getVersion() + 1);
+                    copy.setPersistent(copy.getState());
+                    copy.setState(Record.State.DB);
                     copy.getTable().putRecord(copy);
-                    Persistent.INSTANCE.getSnapshot().onChanged(entry.getKey(), copy);
+                    transactionPack.put(entry.getKey(), copy);
                 }
             }
+            // 这里只会有一次锁竞争
+            Persistent.INSTANCE.getSnapshot().onChanged(transactionPack);
             // 再修改entity
             logs.values().stream().flatMap(v -> v.values().stream()).forEach(Transaction::commit);
 

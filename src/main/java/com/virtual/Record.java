@@ -11,6 +11,8 @@ public class Record<T extends TableDefine> {
 
     private int version;
     private State state = State.DB;
+    // 持久化的状态
+    private transient State persistent = State.DB;
     private T entity; // 这里的entity就是内存中的数据，不论有几个Record副本都是同一个权威数据
     private Table<T> table;
     private Comparable<?> primaryKey;
