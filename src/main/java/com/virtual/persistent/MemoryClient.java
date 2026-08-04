@@ -36,6 +36,22 @@ public class MemoryClient implements PersistentClient {
             public Iterable<T> selectByLimit(int cacheSize) {
                 return null;
             }
+
+            @Override
+            public void batchWrite(java.util.List<BatchOp> ops) {
+            }
         };
+    }
+
+    @Override
+    public void startTransaction() {
+    }
+
+    @Override
+    public void commitTransaction() {
+    }
+
+    @Override
+    public void abortTransaction() {
     }
 }

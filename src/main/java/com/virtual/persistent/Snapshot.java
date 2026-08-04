@@ -31,8 +31,6 @@ public class Snapshot extends Thread implements AutoCloseable {
     private final BlockingQueue<Map<LockKey, Record<?>>> changed = new LinkedBlockingQueue<>();
     private final BlockingQueue<Map<LockKey, Record<?>>> _changed = new LinkedBlockingQueue<>();
 
-    //    private final Map<LockKey, Record<?>> changed = new ConcurrentHashMap<>();
-//    private final Map<LockKey, Record<?>> _changed = new ConcurrentHashMap<>();
     private Map<LockKey, Operation> snapshot = new HashMap<>(); // 只会被快照线程读写
     private long nextSnapshotTime = System.nanoTime(); // 下一次快照时间
     private volatile boolean running = true;

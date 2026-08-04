@@ -19,6 +19,9 @@ public interface TableHelper<T> {
 
     Iterable<T> selectByLimit(int cacheSize);
 
-    default void insert(Writer writer){}
-    default void update(Comparable<?> key, Writer writer){}
+    /** 批量写入，参与当前事务（如有） */
+    void batchWrite(java.util.List<BatchOp> ops);
+
+    default void insert(Writer writer) {}
+    default void update(Comparable<?> key, Writer writer) {}
 }

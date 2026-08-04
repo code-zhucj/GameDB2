@@ -1,11 +1,13 @@
 package com.virtual;
 
 import com.virtual.api.T;
+import com.virtual.persistent.BatchOp;
 import com.virtual.persistent.Persistent;
 import com.virtual.persistent.TableHelper;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
@@ -123,6 +125,12 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
     @Override
     public Iterable<Entity> selectByLimit(int cacheSize) {
         return tableHelper.selectByLimit(cacheSize);
+    }
+
+    @Override
+    public void batchWrite(List<BatchOp> ops) {
+        // 内存 Table 不直接负责持久化，由 MongoTableHelper 处理
+        throw new UnsupportedOperationException("Table.batchWrite is not supported, use persistent layer");
     }
 
 

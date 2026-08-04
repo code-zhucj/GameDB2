@@ -10,4 +10,13 @@ import com.virtual.TableDefine;
 public interface PersistentClient {
 
     <T extends TableDefine> TableHelper<T> getHelper(String tableName, Class<T> tableClass);
+
+    /** 开启事务 */
+    void startTransaction();
+
+    /** 提交事务 */
+    void commitTransaction();
+
+    /** 回滚事务 */
+    void abortTransaction();
 }

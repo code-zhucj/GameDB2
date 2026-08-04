@@ -9,5 +9,5 @@ import com.virtual.codec.Writer;
  * @Description 数据库操作元组
  * @Create: 2026/8/2 22:12
  */
-record Operation(Table<?> t, Record.State s, Writer w) {
+public record Operation(Table<?> t, Record.State s, Writer w) {
 }
