@@ -29,8 +29,8 @@ public enum Persistent {
             @Override
             public void run() {
                 log.info("关闭前需要等待snapshot和flash无任务");
-                snapshot.close();
                 TransactionImpl.TRANSACTION_POOL.close();
+                snapshot.close();
                 while (!snapshot.isEnd() || !flash.isEnd()) {
                     LockSupport.parkNanos(1_000_000_000);
                 }

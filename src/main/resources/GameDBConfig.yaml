@@ -1,0 +1,17 @@
+# 内存事物相关配置
+maxTransactionCount: 1000000
+retryNum: 3
+doubleExec: true # 是否开启重复执行
+snapshotPeriod: 1000 # 快照周期(ms)
+
+# MySQL 数据库配置
+persistentDB: MONGO
+database:
+  url: mongodb://localhost
+  username: root
+  password: root
+  useDatabase: game
+  authDatabase: admin
+  connectionTimeout: 30000
+  connectTimeout: 60000
+  readTimeout: 30000

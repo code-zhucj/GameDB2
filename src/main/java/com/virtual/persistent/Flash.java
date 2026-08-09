@@ -22,6 +22,9 @@ public class Flash extends Thread {
     private final LinkedBlockingDeque<Map<LockKey, Operation>> tasks = new LinkedBlockingDeque<>();
     private volatile boolean ending = false;
 
+    private boolean retry = false;
+    private long retryStartTime = 0;
+
     public Flash() {
         super("Flash");
     }
@@ -51,6 +54,7 @@ public class Flash extends Thread {
                 }
                 client.commitTransaction();
                 log.info("flash 处理数据量 {} 完成, 耗时 {} ms", poll.size(), System.currentTimeMillis() - startTime);
+                retry = false;
             } catch (Exception e) {
                 log.error("Flash 落库异常，回滚事务！", e);
                 try {
@@ -59,6 +63,18 @@ public class Flash extends Thread {
                     log.error("事务回滚失败", ex);
                 }
                 log.info("失败事物重新入队重试");
+
+                if (!retry) {
+                    retry = true;
+                    retryStartTime = System.currentTimeMillis();
+                } else if (System.currentTimeMillis() - retryStartTime >= 120_000) {
+                    log.error("严重异常,Flash 重试超过2分钟,GameDB将停止工作,请检查数据库是否正常");
+                    System.exit(0);
+                    break;
+                } else if (System.currentTimeMillis() - retryStartTime >= 60_000) {
+                    log.error("严重异常,Flash 重试超过1分钟,请检查数据库是否正常");
+                }
+
                 LockSupport.parkNanos(1_000_000_000L); // 退避 1 秒，避免 DB 宕机时空转
                 tasks.offerFirst(poll); // 插回队头，保证事务处理顺序
             }

@@ -14,6 +14,10 @@ public interface Logic {
         return TransactionImpl.submit(this);
     }
 
+    default State execute() {
+        return TransactionImpl.execute(this);
+    }
+
     /**
      * 逻辑核心处理方法
      *

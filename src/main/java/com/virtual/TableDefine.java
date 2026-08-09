@@ -1,5 +1,6 @@
 package com.virtual;
 
+import com.virtual.api.T;
 import com.virtual.entity.Entity;
 
 /**
@@ -7,6 +8,7 @@ import com.virtual.entity.Entity;
  * @Description 表定义
  * @Create: 2026/5/25 22:28
  */
+@T
 public abstract class TableDefine extends Entity {
 
     public Comparable<?> primaryKey() {

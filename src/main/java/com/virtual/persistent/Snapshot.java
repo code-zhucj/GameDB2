@@ -1,5 +1,6 @@
 package com.virtual.persistent;
 
+import com.virtual.GameDB;
 import com.virtual.LockKey;
 import com.virtual.Record;
 import com.virtual.RowLock;
@@ -25,7 +26,7 @@ import java.util.concurrent.locks.LockSupport;
 @Slf4j
 public class Snapshot extends Thread implements AutoCloseable {
 
-    private static final long PERIOD = 5 * 1000 * 1000 * 1000L;
+    private static final long PERIOD = GameDB.getCONFIG().getSnapshotPeriod() * 1000 * 1000L;
 
     private final AtomicBoolean lock = new AtomicBoolean(true); // 快照锁
     private final BlockingQueue<Map<LockKey, Record<?>>> changed = new LinkedBlockingQueue<>();
@@ -99,6 +100,10 @@ public class Snapshot extends Thread implements AutoCloseable {
                         copy.getEntity().encode(writer);
                         snapshot.put(entry.getKey(), new Operation(copy.getTable(), copy.getPersistent(), writer));
                     }
+                } catch (Exception e) {
+                    // 这里其实不太可能出现异常了,假设这里出现了未知的异常,那么此时快照中数据已经是不对的了,那么需要直接退出进程,丢弃最近的改动
+                    log.error("快照出现异常", e);
+                    System.exit(0);
                 } finally {
                     readLock.unlock();
                 }
@@ -113,9 +118,9 @@ public class Snapshot extends Thread implements AutoCloseable {
             if (!running || System.nanoTime() >= this.nextSnapshotTime) {
                 this.nextSnapshotTime = System.nanoTime() + PERIOD;
                 long startTime = System.currentTimeMillis();
-                log.info("snapshot start time {}", startTime);
+                log.info("快照 {}", startTime);
                 snapshot();
-                log.info("snapshot start end {}, cost {}", System.currentTimeMillis(), System.currentTimeMillis() - startTime);
+                log.info("快照 {}, 耗时 {} ms", System.currentTimeMillis(), System.currentTimeMillis() - startTime);
                 long waitTime = this.nextSnapshotTime - System.nanoTime();
                 if (waitTime > 0) {
                     LockSupport.parkNanos(waitTime);

@@ -12,14 +12,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 
 /**
@@ -28,7 +27,8 @@ import java.util.concurrent.locks.Lock;
 @Slf4j
 public final class TransactionImpl implements Transaction {
 
-    private static final int THREAD_NUM = 10;
+    private static final AtomicLong TRANSACTION_NUMS = new AtomicLong(0);
+    private static final int THREAD_NUM = GameDB.getCONFIG().getTransactionThreadNum();
     public static ThreadPoolExecutor TRANSACTION_POOL = new ThreadPoolExecutor(THREAD_NUM, THREAD_NUM, 0, TimeUnit.MICROSECONDS, new LinkedBlockingDeque<>(), new ThreadFactory() {
         private static final AtomicInteger id = new AtomicInteger();
 
@@ -49,8 +49,7 @@ public final class TransactionImpl implements Transaction {
     private final List<Runnable> commitTask = new ArrayList<>();
 
     private final TreeMap<LockKey, Record<?>> records = new TreeMap<>();
-    private int retryNum = 3; // todo 开放配置
-
+    private int retryNum = 0;
 
     public static TransactionImpl checkAndGet() {
         TransactionImpl transaction = CURRENT.get();
@@ -73,11 +72,35 @@ public final class TransactionImpl implements Transaction {
     }
 
     public static boolean existLogic() {
-        return !TRANSACTION_POOL.getQueue().isEmpty();
+        return TRANSACTION_NUMS.get() > 0;
     }
 
+    /**
+     * submit 提交一个事物,规则是需要在非事物环境提交,如果当前已在事物环境,则分两种情况
+     * 1：需要立即执行，那么使用{@link TransactionImpl#execute(Logic)}
+     * 2: 希望异步新事物中执行: 则考虑使用{@link TransactionImpl#addCommitTask(Runnable)} 或 {@link TransactionImpl#addRollbackTask(Runnable)}
+     *
+     * @param logic
+     * @return
+     */
     public static Future<?> submit(Logic logic) {
+        TransactionImpl transaction = CURRENT.get();
+        if (transaction != null) {
+            log.error("{} 只允许在非事物环境提交", logic.getClass().getName());
+            throw new GameDBException();
+        }
+        TRANSACTION_NUMS.incrementAndGet();
         return TRANSACTION_POOL.submit(new LogicFuture(logic));
+    }
+
+    /**
+     * 加入到当前事物中，只允许在事物环境下运行
+     */
+    public static Logic.State execute(Logic logic) {
+        checkAndGet();
+        LogicFuture logicFuture = new LogicFuture(logic);
+        logicFuture.run();
+        return logicFuture.result;
     }
 
     public void log(Entity entity, String field, Log<?> log) {
@@ -89,32 +112,42 @@ public final class TransactionImpl implements Transaction {
         // 对于子事物，将所有的提交日志merge到父日志中
         TransactionImpl transaction = transactions.removeLast();
         if (transactions.isEmpty()) {
-            // 空了,真正开始提交,那么此时主要开始遍历所有涉及到的修改，先循环锁定再慢慢改
-            if (!checkAndLock()) {
-                throw new GameDBException(); // todo 这里先抛异常
-            }
-            Set<Entity> entities = HashSet.newHashSet(logs.size());
-            logs.keySet().forEach(entity -> entities.add(entity.getRoot()));
-            Map<LockKey, Record<?>> transactionPack = HashMap.newHashMap(entities.size());
-            // 先设置版本号
-            for (Map.Entry<LockKey, Record<?>> entry : records.entrySet()) {
-                Record<?> copy = entry.getValue();
-                if (entities.contains(copy.getEntity())) {
-                    copy.setVersion(copy.getVersion() + 1);
-                    copy.setPersistent(copy.getState());
-                    copy.setState(Record.State.DB);
-                    copy.getTable().putRecord(copy);
-                    transactionPack.put(entry.getKey(), copy);
+            try{
+                // 空了,真正开始提交,那么此时主要开始遍历所有涉及到的修改，先循环锁定再慢慢改
+                if (!checkAndLock()) {
+                    throw new GameDBException(); // todo 这里先抛异常
                 }
+                Set<Entity> entities = HashSet.newHashSet(logs.size());
+                logs.keySet().forEach(entity -> entities.add(entity.getRoot()));
+                Map<LockKey, Record<?>> transactionPack = HashMap.newHashMap(entities.size());
+                // 先设置版本号
+                for (Map.Entry<LockKey, Record<?>> entry : records.entrySet()) {
+                    Record<?> copy = entry.getValue();
+                    if (copy.getState() == Record.State.DELETE) {
+                        copy.setPersistent(Record.State.DELETE);
+                        copy.getTable().removeRecord(entry.getKey());
+                        transactionPack.put(entry.getKey(), copy);
+                    } else if (entities.remove(copy.getEntity())) {
+                        copy.setVersion(copy.getVersion() + 1);
+                        copy.setPersistent(copy.getState());
+                        copy.setState(Record.State.DB);
+                        copy.getTable().putRecord(copy);
+                        transactionPack.put(entry.getKey(), copy);
+                    }
+                }
+                // 所有的record 都修改完成了,如果entities中依然不为空,则存在非法访问的entity
+                if (!entities.isEmpty()) {
+                    throw new GameDBException();
+                }
+                // 这里只会有一次锁竞争
+                Persistent.INSTANCE.getSnapshot().onChanged(transactionPack);
+                // 再修改entity
+                logs.values().stream().flatMap(v -> v.values().stream()).forEach(Transaction::commit);
+                CURRENT.remove();
+                transaction.commitTask.forEach(Runnable::run);
+            } finally {
+                releaseLock();
             }
-            // 这里只会有一次锁竞争
-            Persistent.INSTANCE.getSnapshot().onChanged(transactionPack);
-            // 再修改entity
-            logs.values().stream().flatMap(v -> v.values().stream()).forEach(Transaction::commit);
-
-            releaseLock();
-            CURRENT.remove();
-            transaction.commitTask.forEach(Runnable::run);
         } else {
             TransactionImpl father = transactions.getLast();
             transaction.logs.forEach((k, v) -> {
@@ -177,10 +210,16 @@ public final class TransactionImpl implements Transaction {
         }
     }
 
+    /**
+     * 添加事物提交后任务，在事物完成提交后执行列表中的任务,注意:执行该任务时是不在事物环境中执行的
+     */
     public void addCommitTask(Runnable r) {
         commitTask.add(r);
     }
 
+    /**
+     * 添加事物回滚后任务，在事物完成回滚后执行列表中的任务,注意:执行回滚任务时,如果是子事物回滚,则运行环境是在父事物中的,如果是父事物回滚,则运行环境是无事物的
+     */
     public void addRollbackTask(Runnable r) {
         rollbackTask.add(r);
     }
@@ -215,9 +254,14 @@ public final class TransactionImpl implements Transaction {
         }
     }
 
+    private boolean isFinalTransaction() {
+        return transactions.size() <= 1;
+    }
+
     private static class LogicFuture implements Runnable {
 
-        private Logic logic;
+        private final Logic logic;
+        private Logic.State result;
 
         public LogicFuture(Logic logic) {
             this.logic = logic;
@@ -226,15 +270,22 @@ public final class TransactionImpl implements Transaction {
         @Override
         public void run() {
             TransactionImpl transaction = TransactionImpl.getOrCreate();
-            Logic.State result;
             try {
                 result = logic.process();
                 if (result == Logic.State.SUCCESS) {
-                    transaction.commit();
-                    return;
+                    if (transaction.isFinalTransaction()
+                            && GameDB.getCONFIG().isDoubleExec()
+                            && transaction.retryNum == 0) {
+                        result = Logic.State.RETRY;
+                    } else {
+                        transaction.commit();
+                        TRANSACTION_NUMS.decrementAndGet();
+                        return;
+                    }
                 }
             } catch (GameDBException e) {
                 result = Logic.State.RETRY;
+                log.debug("事物失败,触发重试", e);
             } catch (Throwable e) {
                 // 此时需要检查一下，是否是版本号是否变化，如果发生变化依然走重试逻辑，因为异常有可能是脏读导致的
                 if (transaction.visitValidVersion()) {
@@ -246,9 +297,10 @@ public final class TransactionImpl implements Transaction {
             }
 
             if (result == Logic.State.RETRY) {
-                if (transaction.retryNum-- <= 0) {
-                    log.error("重试{}次未成功, 异常Logic {}", 3, logic.getClass().getName());
+                if (transaction.retryNum++ >= GameDB.getCONFIG().getRetryNum()) {
+                    log.error("重试{}次未成功, 异常Logic {}", transaction.retryNum, logic.getClass().getName());
                     transaction.rollback(); // 这里看实际业务需求看是不是可以执行回滚任务
+                    TRANSACTION_NUMS.decrementAndGet();
                     return;
                 }
                 log.debug("事物重试 {}", this.logic.getClass().getName());
@@ -257,6 +309,7 @@ public final class TransactionImpl implements Transaction {
                 transaction.releaseLock();
             } else {
                 transaction.rollback();
+                TRANSACTION_NUMS.decrementAndGet();
             }
         }
     }

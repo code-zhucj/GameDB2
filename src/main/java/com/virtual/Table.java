@@ -23,7 +23,6 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
     private int cacheSize;
 
     private final TableHelper<Entity> tableHelper;
-    private final ReentrantLock tableLock = new ReentrantLock();
 
 
     public Table(Class<Entity> tableClass) {
@@ -195,5 +194,9 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
 
     void putRecord(Record<?> record) {
         records.put(record.getPrimaryKey(), (Record<Entity>) record);
+    }
+
+    void removeRecord(Comparable<?> key) {
+        records.remove(key);
     }
 }
