@@ -1,6 +1,7 @@
 package com.virtual;
 
 import com.virtual.Log.Log;
+import com.virtual.api.TableConfig;
 import com.virtual.entity.Entity;
 import com.virtual.exception.GameDBException;
 import com.virtual.exception.RetryException;
@@ -128,13 +129,19 @@ public final class TransactionImpl implements Transaction {
                 logs.keySet().forEach(entity -> entities.add(entity.getRoot()));
                 Map<LockKey, Record<?>> transactionPack = HashMap.newHashMap(entities.size());
                 // 先设置版本号
+                boolean immediate = false;
                 for (Map.Entry<LockKey, Record<?>> entry : records.entrySet()) {
                     Record<?> copy = entry.getValue();
+                    if (!immediate && copy.getTable().getTableConfig().immediate()) {
+                        immediate = true;
+                    }
                     if (copy.getState() == Record.State.DELETE) {
                         copy.setPersistent(Record.State.DELETE);
                         // 重新put一个空的进去表示库中已经没有,避免该记录处于未Flash状态但内存已不存在,而另一线程从库中读到旧数据的问题
                         copy.getTable().putRecord(new Record<>(Record.State.NULL, copy.getTable(), copy.getPrimaryKey()));
-                        transactionPack.put(entry.getKey(), copy);
+                        if (copy.getTable().getTableConfig().type() == TableConfig.Type.DB) {
+                            transactionPack.put(entry.getKey(), copy);
+                        }
                     } else if (entities.remove(copy.getEntity())
                             || copy.getState() == Record.State.UPDATE
                             || copy.getState() == Record.State.INSERT) {
@@ -142,20 +149,22 @@ public final class TransactionImpl implements Transaction {
                         copy.setPersistent(copy.getState());
                         copy.setState(Record.State.DB);
                         copy.getTable().putRecord(copy);
-                        transactionPack.put(entry.getKey(), copy);
+                        if (copy.getTable().getTableConfig().type() == TableConfig.Type.DB) {
+                            transactionPack.put(entry.getKey(), copy);
+                        }
                     }
                 }
                 // 所有的record 都修改完成了,如果entities中依然不为空,则存在非法访问的entity
                 if (!entities.isEmpty()) {
                     throw new GameDBException("非法访问entity");
                 }
-                if (transactionPack.isEmpty()) {
-                    CURRENT.remove();
-                    transaction.commitTask.forEach(Runnable::run);
-                    return;
+                if (!transactionPack.isEmpty()) {
+                    // 这里只会有一次锁竞争
+                    Persistent.INSTANCE.getSnapshot().onChanged(transactionPack);
+                    if (immediate) {
+                        Persistent.INSTANCE.getSnapshot().triggerImmediate();
+                    }
                 }
-                // 这里只会有一次锁竞争
-                Persistent.INSTANCE.getSnapshot().onChanged(transactionPack);
                 // 再修改entity
                 logs.values().stream().flatMap(v -> v.values().stream()).forEach(Transaction::commit);
                 CURRENT.remove();

@@ -42,6 +42,12 @@ public class Snapshot extends Thread implements AutoCloseable {
         super("Snapshot");
     }
 
+    /** 触发立即快照，用于 immediate=true 的表修改后尽快落库 */
+    public void triggerImmediate() {
+        this.nextSnapshotTime = 0;
+        LockSupport.unpark(this);
+    }
+
 
     public void onChanged(Map<LockKey, Record<?>> transactionPack) {
         if (lock.get()) {

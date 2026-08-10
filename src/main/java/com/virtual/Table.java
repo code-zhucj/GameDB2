@@ -21,6 +21,8 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
     @Getter
     private String tableName;
     private int cacheSize;
+    @Getter
+    private TableConfig tableConfig;
 
     private final TableHelper<Entity> tableHelper;
 
@@ -32,12 +34,12 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
     }
 
     public void initTableInfo() {
-        TableConfig TableConfig = this.tableClass.getAnnotation(TableConfig.class);
-        tableName = TableConfig.value();
+        this.tableConfig = this.tableClass.getAnnotation(TableConfig.class);
+        tableName = tableConfig.value();
         if (tableName.isBlank()) {
             tableName = this.tableClass.getSimpleName();
         }
-        cacheSize = TableConfig.cacheSize();
+        cacheSize = tableConfig.cacheSize();
     }
 
     /**

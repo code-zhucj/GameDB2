@@ -25,14 +25,23 @@ public @interface TableConfig {
     int cacheSize() default 10000;
 
     /**
-     * todo 需支持立即落库,思路是当前表触发修改时将当前事物标记为立即落库,直接修改下一次快照时间为当前即可实现
-     *
+     * 是否立即落库，true 时事务提交后立即触发快照，不再等待 snapshotPeriod
      */
     boolean immediate() default false;
 
+    /**
+     * 表类型
+     */
     Type type() default Type.DB;
 
     enum Type {
-        MEMORY, DB
+        /**
+         * 内存表,无需持久化
+         */
+        MEMORY,
+        /**
+         * DB表,需要持久化
+         */
+        DB
     }
 }
