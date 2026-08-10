@@ -20,4 +20,16 @@ public @interface T {
      * 表默认缓存的数量量大小
      */
     int cacheSize() default 10000;
+
+    /**
+     * todo 需支持立即落库,思路是当前表触发修改时将当前事物标记为立即落库,直接修改下一次快照时间为当前即可实现
+     *
+     */
+    boolean immediate() default false;
+
+    Type type() default Type.DB;
+
+    enum Type {
+        MEMORY, DB
+    }
 }

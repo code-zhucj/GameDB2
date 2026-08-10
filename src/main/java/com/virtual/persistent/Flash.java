@@ -2,6 +2,7 @@ package com.virtual.persistent;
 
 import com.virtual.LockKey;
 import com.virtual.TableDefine;
+import com.virtual.TransactionImpl;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -55,8 +56,10 @@ public class Flash extends Thread {
                 client.commitTransaction();
                 log.info("flash 处理数据量 {} 完成, 耗时 {} ms", poll.size(), System.currentTimeMillis() - startTime);
                 retry = false;
+                TransactionImpl.setReject(false);
             } catch (Exception e) {
                 log.error("Flash 落库异常，回滚事务！", e);
+                TransactionImpl.setReject(true);
                 try {
                     client.abortTransaction();
                 } catch (Exception ex) {

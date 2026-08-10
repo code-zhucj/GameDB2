@@ -1,5 +1,6 @@
 package com.virtual;
 
+import com.virtual.exception.GameDBException;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.File;

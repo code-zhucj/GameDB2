@@ -1,4 +1,4 @@
-package com.virtual;
+package com.virtual.exception;
 
 public class GameDBException extends RuntimeException {
     public GameDBException() {}

@@ -2,7 +2,10 @@ package com.virtual;
 
 import com.virtual.Log.Log;
 import com.virtual.entity.Entity;
+import com.virtual.exception.GameDBException;
+import com.virtual.exception.RetryException;
 import com.virtual.persistent.Persistent;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -23,13 +26,17 @@ import java.util.concurrent.locks.Lock;
 
 /**
  * 事物处理的具体实现
+ * todo 事物需要补充监控 事务数量、重试率、快照耗时、Flash 吞吐量、队列深度 （MBean 实现）
+ * todo 补充事物超时机制
  */
 @Slf4j
 public final class TransactionImpl implements Transaction {
 
     private static final AtomicLong TRANSACTION_NUMS = new AtomicLong(0);
     private static final int THREAD_NUM = GameDB.getCONFIG().getTransactionThreadNum();
-    public static ThreadPoolExecutor TRANSACTION_POOL = new ThreadPoolExecutor(THREAD_NUM, THREAD_NUM, 0, TimeUnit.MICROSECONDS, new LinkedBlockingDeque<>(), new ThreadFactory() {
+    @Setter
+    private static volatile boolean reject = false;
+    public static ThreadPoolExecutor TRANSACTION_POOL = new ThreadPoolExecutor(THREAD_NUM, THREAD_NUM, 0, TimeUnit.MICROSECONDS, new LinkedBlockingDeque<>(GameDB.getCONFIG().getMaxTransactionCount()), new ThreadFactory() {
         private static final AtomicInteger id = new AtomicInteger();
 
         @Override
@@ -56,7 +63,6 @@ public final class TransactionImpl implements Transaction {
         if (transaction == null) {
             throw new RuntimeException("当前非事物环境");
         }
-        // todo 不是说事物不为空就行，比如事物回滚时执行回滚任务，此时事物还在，但时已经不算处于事物中了，这个得处理一下
         return transaction.transactions.getLast();
     }
 
@@ -105,6 +111,7 @@ public final class TransactionImpl implements Transaction {
 
     public void log(Entity entity, String field, Log<?> log) {
         logs.computeIfAbsent(entity, _ -> new HashMap<>()).put(field, log);
+        markModify();
     }
 
     @Override
@@ -112,10 +119,10 @@ public final class TransactionImpl implements Transaction {
         // 对于子事物，将所有的提交日志merge到父日志中
         TransactionImpl transaction = transactions.removeLast();
         if (transactions.isEmpty()) {
-            try{
+            try {
                 // 空了,真正开始提交,那么此时主要开始遍历所有涉及到的修改，先循环锁定再慢慢改
                 if (!checkAndLock()) {
-                    throw new GameDBException(); // todo 这里先抛异常
+                    throw new RetryException();
                 }
                 Set<Entity> entities = HashSet.newHashSet(logs.size());
                 logs.keySet().forEach(entity -> entities.add(entity.getRoot()));
@@ -125,9 +132,12 @@ public final class TransactionImpl implements Transaction {
                     Record<?> copy = entry.getValue();
                     if (copy.getState() == Record.State.DELETE) {
                         copy.setPersistent(Record.State.DELETE);
-                        copy.getTable().removeRecord(entry.getKey());
+                        // 重新put一个空的进去表示库中已经没有,避免该记录处于未Flash状态但内存已不存在,而另一线程从库中读到旧数据的问题
+                        copy.getTable().putRecord(new Record<>(Record.State.NULL, copy.getTable(), copy.getPrimaryKey()));
                         transactionPack.put(entry.getKey(), copy);
-                    } else if (entities.remove(copy.getEntity())) {
+                    } else if (entities.remove(copy.getEntity())
+                            || copy.getState() == Record.State.UPDATE
+                            || copy.getState() == Record.State.INSERT) {
                         copy.setVersion(copy.getVersion() + 1);
                         copy.setPersistent(copy.getState());
                         copy.setState(Record.State.DB);
@@ -137,7 +147,12 @@ public final class TransactionImpl implements Transaction {
                 }
                 // 所有的record 都修改完成了,如果entities中依然不为空,则存在非法访问的entity
                 if (!entities.isEmpty()) {
-                    throw new GameDBException();
+                    throw new GameDBException("非法访问entity");
+                }
+                if (transactionPack.isEmpty()) {
+                    CURRENT.remove();
+                    transaction.commitTask.forEach(Runnable::run);
+                    return;
                 }
                 // 这里只会有一次锁竞争
                 Persistent.INSTANCE.getSnapshot().onChanged(transactionPack);
@@ -258,6 +273,12 @@ public final class TransactionImpl implements Transaction {
         return transactions.size() <= 1;
     }
 
+    public void markModify() {
+        if (reject) {
+            throw new GameDBException("服务器繁忙,暂时无法提交修改");
+        }
+    }
+
     private static class LogicFuture implements Runnable {
 
         private final Logic logic;
@@ -283,9 +304,12 @@ public final class TransactionImpl implements Transaction {
                         return;
                     }
                 }
-            } catch (GameDBException e) {
+            } catch (RetryException e) {
                 result = Logic.State.RETRY;
-                log.debug("事物失败,触发重试", e);
+                log.warn("事物失败,触发重试", e);
+            } catch (GameDBException e) {
+                result = Logic.State.EXCEPTION;
+                log.error("事物异常", e);
             } catch (Throwable e) {
                 // 此时需要检查一下，是否是版本号是否变化，如果发生变化依然走重试逻辑，因为异常有可能是脏读导致的
                 if (transaction.visitValidVersion()) {

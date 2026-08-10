@@ -1,6 +1,7 @@
 package com.virtual;
 
 import com.virtual.api.T;
+import com.virtual.exception.GameDBException;
 import com.virtual.persistent.BatchOp;
 import com.virtual.persistent.Persistent;
 import com.virtual.persistent.TableHelper;
@@ -10,7 +11,6 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.ReentrantLock;
 
 @Slf4j
 public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
@@ -55,6 +55,7 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
 
     @Override
     public void insert(Entity entity) {
+        checkEntity(entity);
         // todo 这里的主键先让用户自己设置,后续补充自增主键
         validPrimaryKey(entity.primaryKey());
         TransactionImpl transaction = TransactionImpl.checkAndGet();
@@ -65,7 +66,7 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
                 recordCopy.setState(Record.State.INSERT);
                 recordCopy.setEntity(entity);
             } else {
-                throw new GameDBException(); // 主键重复
+                throw new GameDBException("主键重复 key:" + entity.primaryKey()); // 主键重复
             }
         } else {
             rowLock.readLock().lock();
@@ -75,17 +76,18 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
                     Entity select = tableHelper.select(entity.primaryKey());
                     if (select != null) {
                         this.records.put(entity.primaryKey(), new Record<>(Record.State.DB, this, select));
-                        throw new GameDBException(); // 主键重复
+                        throw new GameDBException("主键重复 key:" + entity.primaryKey()); // 主键重复
                     }
                     this.records.put(entity.primaryKey(), tRecord = new Record<>(Record.State.NULL, this, entity.primaryKey()));
                 } else if (tRecord.getEntity() != null) {
-                    throw new GameDBException(); // 主键重复
+                    throw new GameDBException("主键重复 key:" + entity.primaryKey()); // 主键重复
                 }
                 Record<Entity> copy = tRecord.copy();
                 copy.setState(Record.State.INSERT);
                 copy.setEntity(entity);
                 copy.bindLock(rowLock);
                 transaction.recorded(rowLock.lockKey, copy);
+                transaction.markModify();
             } finally {
                 rowLock.readLock().unlock();
             }
@@ -94,6 +96,7 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
 
     @Override
     public void update(Entity entity) {
+        checkEntity(entity);
         validPrimaryKey(entity.primaryKey());
         // 这里更像是用一个新的entity去覆盖旧的entity,实际业务使用中应该比较少,都是直接select后直接在对象上修改
         TransactionImpl transaction = TransactionImpl.checkAndGet();
@@ -119,6 +122,7 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
             recordCopy.setState(Record.State.UPDATE);
         }
         recordCopy.setEntity(entity);
+        transaction.markModify();
     }
 
     @Override
@@ -175,16 +179,23 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
                 copy.bindLock(rowLock);
                 copy.setState(Record.State.DELETE);
                 transaction.recorded(rowLock.lockKey, copy);
+                transaction.markModify();
             } finally {
                 rowLock.readLock().unlock();
             }
         }
     }
 
+    private void checkEntity(Entity e) {
+        if (Tables.getTable(e.getClass()) != null) {
+            throw new GameDBException("请使用com.virtual.Tables.create创建的entity进行操作");
+        }
+    }
+
 
     private void validPrimaryKey(Comparable<?> id) {
         if (id == null) {
-            throw new GameDBException();
+            throw new GameDBException("主键为null");
         }
     }
 

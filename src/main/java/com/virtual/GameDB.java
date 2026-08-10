@@ -1,5 +1,6 @@
 package com.virtual;
 
+import com.virtual.exception.GameDBException;
 import lombok.Getter;
 import org.yaml.snakeyaml.Yaml;
 
