@@ -1,6 +1,6 @@
 package com.virtual;
 
-import com.virtual.api.T;
+import com.virtual.api.TableConfig;
 import com.virtual.exception.GameDBException;
 import com.virtual.persistent.BatchOp;
 import com.virtual.persistent.Persistent;
@@ -32,12 +32,12 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
     }
 
     public void initTableInfo() {
-        T t = this.tableClass.getAnnotation(T.class);
-        tableName = t.value();
+        TableConfig TableConfig = this.tableClass.getAnnotation(TableConfig.class);
+        tableName = TableConfig.value();
         if (tableName.isBlank()) {
             tableName = this.tableClass.getSimpleName();
         }
-        cacheSize = t.cacheSize();
+        cacheSize = TableConfig.cacheSize();
     }
 
     /**
