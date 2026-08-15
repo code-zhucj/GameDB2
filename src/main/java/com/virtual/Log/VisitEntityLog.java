@@ -6,7 +6,7 @@ import java.util.function.Consumer;
 
 /**
  * @author zhuchuanji
- * @Description todo
+ * @Description Entity 的访问log记录
  * @Create: 2026/7/19 3:22
  */
 public class VisitEntityLog<E, T extends VisitEntity<E>> implements Log<E> {

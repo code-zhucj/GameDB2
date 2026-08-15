@@ -1,11 +1,10 @@
 package com.virtual.persistent;
 
 import com.virtual.TableDefine;
-import com.virtual.codec.Writer;
 
 /**
  * @author zhuchuanji
- * @Description todo
+ * @Description 内存客户端, 不提供持久化相关功能
  * @Create: 2026/6/21 18:27
  */
 public class MemoryClient implements PersistentClient {

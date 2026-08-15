@@ -26,7 +26,7 @@ import java.util.concurrent.locks.LockSupport;
 @Slf4j
 public class Snapshot extends Thread implements AutoCloseable {
 
-    private static final long PERIOD = GameDB.getCONFIG().getSnapshotPeriod() * 1000 * 1000L;
+    private static final long PERIOD = GameDB.getConfig().getSnapshotPeriod() * 1000 * 1000L;
 
     private final AtomicBoolean lock = new AtomicBoolean(true); // 快照锁
     private final BlockingQueue<Map<LockKey, Record<?>>> changed = new LinkedBlockingQueue<>();

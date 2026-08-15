@@ -24,10 +24,7 @@ public class MongoReader implements Reader {
 
     /** 从 RawBsonDocument 构造（通过 Codec 获取字节，少量编解码开销） */
     public MongoReader(RawBsonDocument document) {
-        BasicOutputBuffer buf = new BasicOutputBuffer();
-        BsonBinaryWriter writer = new BsonBinaryWriter(buf);
-        new BsonDocumentCodec().encode(writer, document, EncoderContext.builder().build());
-        this.bsonReader = new BsonBinaryReader(ByteBuffer.wrap(buf.toByteArray()));
+        this.bsonReader = new BsonBinaryReader(document.getByteBuffer().asNIO());
     }
 
     // ---- 文档结构 ----

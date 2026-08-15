@@ -3,8 +3,9 @@ maxTransactionCount: 1000000
 retryNum: 3
 doubleExec: true # 是否开启重复执行
 snapshotPeriod: 1000 # 快照周期(ms)
+logicTimeout: 30000 # logic执行超时时间,超时只打日志(ms)
 
-# MySQL 数据库配置
+# Mongo 数据库配置,需要支持副本集(事物)
 persistentDB: MONGO
 database:
   url: mongodb://localhost

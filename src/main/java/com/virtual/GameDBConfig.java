@@ -26,6 +26,11 @@ public class GameDBConfig {
      * 事物重复执行,用于在开发环境下模拟事物重试,这个可以更容易发现一些不可重复执行的操作,比如修改logic中的变量,重复IO等
      */
     private boolean doubleExec = false;
+
+    /**
+     * logic执行超时时间,超时只打日志(ms)
+     */
+    private long logicTimeout = 30000;
     /**
      * 持久化数据库类型，目前只支持Mongo
      */

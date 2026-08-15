@@ -14,7 +14,6 @@ import com.mongodb.client.model.InsertOneModel;
 import com.mongodb.client.model.ReplaceOneModel;
 import com.mongodb.client.model.ReplaceOptions;
 import com.mongodb.client.model.WriteModel;
-import com.mongodb.connection.SocketSettings;
 import com.virtual.GameDB;
 import com.virtual.GameDBConfig;
 import com.virtual.TableDefine;
@@ -50,9 +49,9 @@ public class MongoClient implements PersistentClient {
 
 
     public MongoClient() {
-        GameDBConfig config = GameDB.getCONFIG();
+        GameDBConfig config = GameDB.getConfig();
         GameDBConfig.Database databaseConfig = config.getDatabase();
-        int connectNum = GameDB.getCONFIG().getTransactionThreadNum();;
+        int connectNum = GameDB.getConfig().getTransactionThreadNum();;
         this.mongoClient = MongoClients.create(MongoClientSettings.builder()
                 .applyConnectionString(new ConnectionString(databaseConfig.getUrl()))
                 .credential(MongoCredential.createCredential(databaseConfig.getUsername(), databaseConfig.getAuthDatabase(), databaseConfig.getPassword().toCharArray()))

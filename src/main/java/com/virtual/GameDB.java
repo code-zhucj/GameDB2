@@ -8,10 +8,10 @@ import java.io.InputStream;
 
 public class GameDB {
     @Getter
-    private static GameDBConfig CONFIG;
+    private static GameDBConfig config;
 
     public static void start() {
-        CONFIG = loadConfig();
+        config = loadConfig();
         Tables.init();
     }
 

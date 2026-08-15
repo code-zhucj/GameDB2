@@ -66,8 +66,6 @@ public final class VisitListEntity<V> extends VisitEntity<List<V>> implements Li
             VisitSetEntity<?> ve = new VisitSetEntity<>(s, true);
             ve.setRoot(getRoot());
             visit.put(index, ve);
-        } else if (value.getClass().isArray()) {
-            // todo 补充数组的安全访问
         }
     }
 

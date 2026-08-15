@@ -5,8 +5,8 @@ import com.virtual.TransactionImpl;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * @author zhuchuanji
@@ -32,7 +32,7 @@ public enum Persistent {
                 TransactionImpl.TRANSACTION_POOL.close();
                 snapshot.close();
                 while (!snapshot.isEnd() || !flash.isEnd()) {
-                    LockSupport.parkNanos(1_000_000_000);
+                    LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(1));
                 }
                 log.info("安全关闭");
             }

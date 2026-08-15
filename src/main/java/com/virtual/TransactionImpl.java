@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.ThreadFactory;
@@ -24,20 +25,20 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.LockSupport;
 
 /**
  * 事物处理的具体实现
  * todo 事物需要补充监控 事务数量、重试率、快照耗时、Flash 吞吐量、队列深度 （MBean 实现）
- * todo 补充事物超时机制
  */
 @Slf4j
-public final class TransactionImpl implements Transaction {
+public final class TransactionImpl implements Transaction, AutoCloseable {
 
     private static final AtomicLong TRANSACTION_NUMS = new AtomicLong(0);
-    private static final int THREAD_NUM = GameDB.getCONFIG().getTransactionThreadNum();
+    private static final int THREAD_NUM = GameDB.getConfig().getTransactionThreadNum();
     @Setter
     private static volatile boolean reject = false;
-    public static ThreadPoolExecutor TRANSACTION_POOL = new ThreadPoolExecutor(THREAD_NUM, THREAD_NUM, 0, TimeUnit.MICROSECONDS, new LinkedBlockingDeque<>(GameDB.getCONFIG().getMaxTransactionCount()), new ThreadFactory() {
+    public static ThreadPoolExecutor TRANSACTION_POOL = new ThreadPoolExecutor(THREAD_NUM, THREAD_NUM, 0, TimeUnit.MICROSECONDS, new LinkedBlockingDeque<>(GameDB.getConfig().getMaxTransactionCount()), new ThreadFactory() {
         private static final AtomicInteger id = new AtomicInteger();
 
         @Override
@@ -45,6 +46,9 @@ public final class TransactionImpl implements Transaction {
             return new Thread(r, "transaction-" + id.getAndIncrement());
         }
     });
+    private static final SafeThread SAFE = new SafeThread() {{
+        start();
+    }};
 
     private static final ThreadLocal<TransactionImpl> CURRENT = new ThreadLocal<>();
     /**
@@ -288,10 +292,16 @@ public final class TransactionImpl implements Transaction {
         }
     }
 
+    @Override
+    public void close() throws Exception {
+        TRANSACTION_POOL.close();
+    }
+
     private static class LogicFuture implements Runnable {
 
         private final Logic logic;
-        private Logic.State result;
+        private volatile Logic.State result;
+        private volatile long startTime;
 
         public LogicFuture(Logic logic) {
             this.logic = logic;
@@ -299,12 +309,16 @@ public final class TransactionImpl implements Transaction {
 
         @Override
         public void run() {
+            result = null;
+            startTime = System.nanoTime();
+            SAFE.exec.put(Thread.currentThread(), this);
             TransactionImpl transaction = TransactionImpl.getOrCreate();
             try {
                 result = logic.process();
+                SAFE.exec.remove(Thread.currentThread());
                 if (result == Logic.State.SUCCESS) {
                     if (transaction.isFinalTransaction()
-                            && GameDB.getCONFIG().isDoubleExec()
+                            && GameDB.getConfig().isDoubleExec()
                             && transaction.retryNum == 0) {
                         result = Logic.State.RETRY;
                     } else {
@@ -330,7 +344,7 @@ public final class TransactionImpl implements Transaction {
             }
 
             if (result == Logic.State.RETRY) {
-                if (transaction.retryNum++ >= GameDB.getCONFIG().getRetryNum()) {
+                if (transaction.retryNum++ >= GameDB.getConfig().getRetryNum()) {
                     log.error("重试{}次未成功, 异常Logic {}", transaction.retryNum, logic.getClass().getName());
                     transaction.rollback(); // 这里看实际业务需求看是不是可以执行回滚任务
                     TRANSACTION_NUMS.decrementAndGet();
@@ -343,6 +357,33 @@ public final class TransactionImpl implements Transaction {
             } else {
                 transaction.rollback();
                 TRANSACTION_NUMS.decrementAndGet();
+            }
+        }
+    }
+
+
+    private static class SafeThread extends Thread {
+
+        private final Map<Thread, LogicFuture> exec = new ConcurrentHashMap<>();
+
+        private SafeThread() {
+            super("SafeThread");
+            setDaemon(true);
+        }
+
+        @Override
+        public void run() {
+            while (!TRANSACTION_POOL.isTerminated()) {
+                long now = System.nanoTime();
+                for (Map.Entry<Thread, LogicFuture> entry : exec.entrySet()) {
+                    LogicFuture logicFuture = entry.getValue();
+                    long costTime = now - logicFuture.startTime;
+                    if (logicFuture.result == null && costTime >= TimeUnit.MILLISECONDS.toNanos(GameDB.getConfig().getLogicTimeout())) {
+                        log.error("线程 {} 执行 {} 超时, 耗时 {}ms", entry.getKey().getName(),
+                                entry.getValue().logic.getClass().getName(), TimeUnit.NANOSECONDS.toMillis(costTime));
+                    }
+                }
+                LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(5));
             }
         }
     }
