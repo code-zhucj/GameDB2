@@ -37,6 +37,10 @@ public class Snapshot extends Thread implements AutoCloseable {
     private volatile boolean running = true;
     @Getter
     private volatile boolean end = false;
+    @Getter
+    private volatile long lastCostMs;
+    @Getter
+    private volatile long snapshotCount;
 
     public Snapshot() {
         super("Snapshot");
@@ -55,6 +59,10 @@ public class Snapshot extends Thread implements AutoCloseable {
         } else {
             _changed.add(transactionPack);
         }
+    }
+
+    public int getQueueDepth() {
+        return changed.size() + _changed.size();
     }
 
     public void snapshot() {
@@ -126,7 +134,9 @@ public class Snapshot extends Thread implements AutoCloseable {
                 long startTime = System.currentTimeMillis();
                 log.info("快照 {}", startTime);
                 snapshot();
-                log.info("快照 {}, 耗时 {} ms", System.currentTimeMillis(), System.currentTimeMillis() - startTime);
+                this.lastCostMs = System.currentTimeMillis() - startTime;
+                this.snapshotCount++;
+                log.info("快照 {}, 耗时 {} ms", System.currentTimeMillis(), this.lastCostMs);
                 long waitTime = this.nextSnapshotTime - System.nanoTime();
                 if (waitTime > 0) {
                     LockSupport.parkNanos(waitTime);

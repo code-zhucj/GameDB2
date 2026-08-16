@@ -1,6 +1,7 @@
 package com.virtual;
 
 import com.virtual.exception.GameDBException;
+import com.virtual.mbean.GameDBMonitor;
 import lombok.Getter;
 import org.yaml.snakeyaml.Yaml;
 
@@ -13,6 +14,7 @@ public class GameDB {
     public static void start() {
         config = loadConfig();
         Tables.init();
+        GameDBMonitor.register();
     }
 
     private static GameDBConfig loadConfig() {

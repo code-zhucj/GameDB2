@@ -1,0 +1,26 @@
+services:
+  mongo:
+    image: mongo:latest
+    container_name: GameDB
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      # 用户名密码,自定义 entrypoint 会据此创建 root 用户
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root
+    entrypoint: ["/bin/bash", "/mongo/entrypoint.sh"]
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+      - ./mongo/entrypoint.sh:/mongo/entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "-u", "root", "-p", "root", "--authenticationDatabase", "admin", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+volumes:
+  mongo_data:
+  mongo_config:

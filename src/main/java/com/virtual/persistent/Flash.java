@@ -3,6 +3,7 @@ package com.virtual.persistent;
 import com.virtual.LockKey;
 import com.virtual.TableDefine;
 import com.virtual.TransactionImpl;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -25,6 +26,15 @@ public class Flash extends Thread {
 
     private boolean retry = false;
     private long retryStartTime = 0;
+
+    @Getter
+    private volatile long totalRecords;
+    @Getter
+    private volatile long totalCostMs;
+    @Getter
+    private volatile long lastRecords;
+    @Getter
+    private volatile long lastCostMs;
 
     public Flash() {
         super("Flash");
@@ -54,7 +64,12 @@ public class Flash extends Thread {
                     helper.batchWrite(group.getValue());
                 }
                 client.commitTransaction();
-                log.info("flash 处理数据量 {} 完成, 耗时 {} ms", poll.size(), System.currentTimeMillis() - startTime);
+                long cost = System.currentTimeMillis() - startTime;
+                this.lastRecords = poll.size();
+                this.lastCostMs = cost;
+                this.totalRecords += poll.size();
+                this.totalCostMs += cost;
+                log.info("flash 处理数据量 {} 完成, 耗时 {} ms", poll.size(), cost);
                 retry = false;
                 TransactionImpl.setReject(false);
             } catch (Exception e) {
@@ -88,6 +103,10 @@ public class Flash extends Thread {
 
     public void addTask(Map<LockKey, Operation> snapshot) {
         tasks.offerLast(snapshot);
+    }
+
+    public int getQueueDepth() {
+        return tasks.size();
     }
 
     public boolean isEnd() {

@@ -35,6 +35,8 @@ import java.util.concurrent.locks.LockSupport;
 public final class TransactionImpl implements Transaction, AutoCloseable {
 
     private static final AtomicLong TRANSACTION_NUMS = new AtomicLong(0);
+    private static final AtomicLong TOTAL_SUBMIT = new AtomicLong(0);
+    private static final AtomicLong RETRY_COUNT = new AtomicLong(0);
     private static final int THREAD_NUM = GameDB.getConfig().getTransactionThreadNum();
     @Setter
     private static volatile boolean reject = false;
@@ -86,6 +88,22 @@ public final class TransactionImpl implements Transaction, AutoCloseable {
         return TRANSACTION_NUMS.get() > 0;
     }
 
+    public static long getActiveTransactionCount() {
+        return TRANSACTION_NUMS.get();
+    }
+
+    public static long getTotalTransactionCount() {
+        return TOTAL_SUBMIT.get();
+    }
+
+    public static long getRetryCount() {
+        return RETRY_COUNT.get();
+    }
+
+    public static int getTransactionQueueDepth() {
+        return TRANSACTION_POOL.getQueue().size();
+    }
+
     /**
      * submit 提交一个事物,规则是需要在非事物环境提交,如果当前已在事物环境,则分两种情况
      * 1：需要立即执行，那么使用{@link TransactionImpl#execute(Logic)}
@@ -101,6 +119,7 @@ public final class TransactionImpl implements Transaction, AutoCloseable {
             throw new GameDBException();
         }
         TRANSACTION_NUMS.incrementAndGet();
+        TOTAL_SUBMIT.incrementAndGet();
         return TRANSACTION_POOL.submit(new LogicFuture(logic));
     }
 
@@ -345,12 +364,13 @@ public final class TransactionImpl implements Transaction, AutoCloseable {
 
             if (result == Logic.State.RETRY) {
                 if (transaction.retryNum++ >= GameDB.getConfig().getRetryNum()) {
-                    log.error("重试{}次未成功, 异常Logic {}", transaction.retryNum, logic.getClass().getName());
+                    log.error("重试{}次未成功, 异常Logic {}", GameDB.getConfig().getRetryNum(), logic.getClass().getName());
                     transaction.rollback(); // 这里看实际业务需求看是不是可以执行回滚任务
                     TRANSACTION_NUMS.decrementAndGet();
                     return;
                 }
                 log.debug("事物重试 {}", this.logic.getClass().getName());
+                RETRY_COUNT.incrementAndGet();
                 transaction.retry();
                 run();
                 transaction.releaseLock();
