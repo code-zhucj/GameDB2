@@ -13,6 +13,7 @@ import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.InsertOneModel;
 import com.mongodb.client.model.ReplaceOneModel;
 import com.mongodb.client.model.ReplaceOptions;
+import com.mongodb.client.model.Sorts;
 import com.mongodb.client.model.WriteModel;
 import com.virtual.GameDB;
 import com.virtual.GameDBConfig;
@@ -22,6 +23,7 @@ import com.virtual.codec.MongoReader;
 import com.virtual.codec.MongoWriter;
 import com.virtual.codec.Writer;
 import lombok.extern.slf4j.Slf4j;
+import org.bson.BsonValue;
 import org.bson.RawBsonDocument;
 
 import java.util.ArrayList;
@@ -151,6 +153,31 @@ public class MongoClient implements PersistentClient {
         @Override
         public Iterable<T> selectByLimit(int cacheSize) {
             return mongoCollection.find().limit(cacheSize).map(this::decode);
+        }
+
+        @Override
+        public Comparable<?> maxKey() {
+            RawBsonDocument doc = mongoCollection.find()
+                    .sort(Sorts.descending("_id"))
+                    .limit(1)
+                    .first();
+            if (doc == null) {
+                return null;
+            }
+            BsonValue id = doc.get("_id");
+            if (id == null) {
+                return null;
+            }
+            if (id.isInt64()) {
+                return id.asInt64().getValue();
+            }
+            if (id.isInt32()) {
+                return id.asInt32().getValue();
+            }
+            if (id.isString()) {
+                return id.asString().getValue();
+            }
+            return null;
         }
     }
 

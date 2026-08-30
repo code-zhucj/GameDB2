@@ -10,8 +10,12 @@ import com.virtual.entity.Entity;
  */
 @TableConfig
 public abstract class TableDefine extends Entity {
-
+    // 表定义中或许可以加个更新时间并以此加个索引,在起服时自动按最近更新加载,或许能提高缓存命中率
     public Comparable<?> primaryKey() {
+        throw new UnsupportedOperationException("未定义主键");
+    }
+
+    public void setPrimaryKey(Comparable<?> key) {
         throw new UnsupportedOperationException("未定义主键");
     }
 

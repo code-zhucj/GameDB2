@@ -8,11 +8,15 @@ import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
+import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.PrimitiveType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
@@ -21,8 +25,12 @@ import javax.tools.JavaFileObject;
 import javax.tools.StandardLocation;
 import java.io.IOException;
 import java.io.Writer;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -73,6 +81,7 @@ public class EntityProxyProcessor extends AbstractProcessor {
                     continue;
                 }
                 idField = idFields.get(0);
+                validateAutoKey(typeElement, idField);
             }
 
             // 生成代理类
@@ -136,6 +145,98 @@ public class EntityProxyProcessor extends AbstractProcessor {
         return false;
     }
 
+    // ---- 自增主键类型校验 ----
+
+    /**
+     * 校验 @Id 的自增主键处理器键类型与字段类型是否匹配。
+     * 自定义 AutoPrimaryKey&lt;K&gt; 的 K 必须与主键字段（装箱后）类型一致，
+     * 否则运行时 setPrimaryKey 强转会抛 ClassCastException。
+     * 默认 TableAutoKey 仅对 long/Long 生效，非 long 走手动主键，不做校验。
+     */
+    private void validateAutoKey(TypeElement typeElement, FieldMeta idField) {
+        VariableElement field = idField.element;
+        TypeMirror genType = readAutoKeyGen(field);
+        if (genType == null || isTableAutoKey(genType)) {
+            return;
+        }
+        TypeMirror k = resolveAutoKeyTypeArg(genType);
+        if (k == null) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                    "自增主键处理器 " + genType + " 未实现 AutoPrimaryKey，无法解析键类型", field);
+            return;
+        }
+        if (k.getKind() == TypeKind.TYPEVAR) {
+            return; // 泛型处理器无法静态确定键类型，跳过
+        }
+        TypeMirror fieldBoxed = box(field.asType());
+        if (!processingEnv.getTypeUtils().isSameType(fieldBoxed, k)) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                    "自增主键处理器 " + genType + " 的键类型 " + k + " 与主键字段 "
+                            + field.getSimpleName() + " 的类型 " + field.asType() + " 不匹配", field);
+        }
+    }
+
+    /** 读取 @Id.autoKeyGen 指定的处理器类型；未显式设置时返回 null（表示使用默认 TableAutoKey） */
+    private TypeMirror readAutoKeyGen(VariableElement field) {
+        for (AnnotationMirror am : field.getAnnotationMirrors()) {
+            if (!am.getAnnotationType().toString().equals("com.virtual.api.Id")) continue;
+            for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> e : am.getElementValues().entrySet()) {
+                if (e.getKey().getSimpleName().contentEquals("autoKeyGen")) {
+                    Object v = e.getValue().getValue();
+                    if (v instanceof TypeMirror tm) return tm;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isTableAutoKey(TypeMirror genType) {
+        if (!(genType instanceof DeclaredType dt)) return false;
+        return ((TypeElement) dt.asElement()).getQualifiedName()
+                .contentEquals("com.virtual.api.AutoPrimaryKey.TableAutoKey");
+    }
+
+    /** 沿处理器的接口/父类链解析 AutoPrimaryKey&lt;K&gt; 的键类型 K */
+    private TypeMirror resolveAutoKeyTypeArg(TypeMirror genType) {
+        if (!(genType instanceof DeclaredType dt)) return null;
+        TypeElement root = (TypeElement) dt.asElement();
+        Deque<TypeElement> queue = new ArrayDeque<>();
+        Set<String> seen = new HashSet<>();
+        queue.add(root);
+        while (!queue.isEmpty()) {
+            TypeElement cur = queue.poll();
+            if (cur == null || !seen.add(cur.getQualifiedName().toString())) continue;
+            for (TypeMirror iface : cur.getInterfaces()) {
+                TypeMirror k = autoKeyArg(iface);
+                if (k != null) return k;
+                if (iface instanceof DeclaredType idt) queue.add((TypeElement) idt.asElement());
+            }
+            TypeMirror sup = cur.getSuperclass();
+            if (sup instanceof DeclaredType sdt) {
+                TypeMirror k = autoKeyArg(sup);
+                if (k != null) return k;
+                queue.add((TypeElement) sdt.asElement());
+            }
+        }
+        return null;
+    }
+
+    private TypeMirror autoKeyArg(TypeMirror t) {
+        if (!(t instanceof DeclaredType dt)) return null;
+        if (((TypeElement) dt.asElement()).getQualifiedName().contentEquals("com.virtual.api.AutoPrimaryKey")) {
+            List<? extends TypeMirror> args = dt.getTypeArguments();
+            return args.size() == 1 ? args.get(0) : null;
+        }
+        return null;
+    }
+
+    private TypeMirror box(TypeMirror t) {
+        if (t.getKind().isPrimitive()) {
+            return processingEnv.getTypeUtils().boxedClass((PrimitiveType) t).asType();
+        }
+        return t;
+    }
+
     // ---- 字段收集 ----
 
     private List<FieldMeta> collectFieldMeta(TypeElement type) {
@@ -151,7 +252,7 @@ public class EntityProxyProcessor extends AbstractProcessor {
             TypeMirror fieldType = field.asType();
             FieldCategory cat = categorize(fieldType);
             boolean isId = field.getAnnotation(Id.class) != null;
-            result.add(new FieldMeta(name, cat, fieldType, isId));
+            result.add(new FieldMeta(name, cat, fieldType, isId, field));
         }
         return result;
     }
@@ -230,6 +331,13 @@ public class EntityProxyProcessor extends AbstractProcessor {
             sb.append("    @Override\n");
             sb.append("    public Comparable<?> primaryKey() {\n");
             sb.append("        return ").append(idGetter).append("();\n");
+            sb.append("    }\n\n");
+
+            // setPrimaryKey(Comparable<?>)：按字段类型强转后走 setter（事务路由）
+            String boxed = box(idField, typeName(idField.genericType));
+            sb.append("    @Override\n");
+            sb.append("    public void setPrimaryKey(Comparable<?> key) {\n");
+            sb.append("        set").append(capitalize(idField.name)).append("((").append(boxed).append(") key);\n");
             sb.append("    }\n\n");
         }
 
@@ -694,12 +802,14 @@ public class EntityProxyProcessor extends AbstractProcessor {
         final FieldCategory category;
         final TypeMirror genericType;
         final boolean isId;
+        final VariableElement element;
 
-        FieldMeta(String name, FieldCategory category, TypeMirror genericType, boolean isId) {
+        FieldMeta(String name, FieldCategory category, TypeMirror genericType, boolean isId, VariableElement element) {
             this.name = name;
             this.category = category;
             this.genericType = genericType;
             this.isId = isId;
+            this.element = element;
         }
     }
 }

@@ -11,6 +11,8 @@ import java.lang.annotation.Target;
  * @Create: 2026/8/2 18:13
  */
 @Target(ElementType.FIELD)
-@Retention(RetentionPolicy.CLASS)
+@Retention(RetentionPolicy.RUNTIME)
 public @interface Id {
+
+    Class<? extends AutoPrimaryKey<?>> autoKeyGen() default AutoPrimaryKey.TableAutoKey.class;
 }

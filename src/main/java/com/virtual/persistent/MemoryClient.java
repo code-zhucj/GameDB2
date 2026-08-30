@@ -39,6 +39,11 @@ public class MemoryClient implements PersistentClient {
             @Override
             public void batchWrite(java.util.List<BatchOp> ops) {
             }
+
+            @Override
+            public Comparable<?> maxKey() {
+                return null;
+            }
         };
     }
 

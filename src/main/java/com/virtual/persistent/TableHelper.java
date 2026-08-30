@@ -22,6 +22,9 @@ public interface TableHelper<T> {
     /** 批量写入，参与当前事务（如有） */
     void batchWrite(java.util.List<BatchOp> ops);
 
+    /** 查询表当前最大主键，用于起服校正自增计数器；表为空返回 null */
+    Comparable<?> maxKey();
+
     default void insert(Writer writer) {
         throw new UnsupportedOperationException("不支持此操作");
     }

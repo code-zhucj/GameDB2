@@ -1,5 +1,7 @@
 package com.virtual;
 
+import com.virtual.api.AutoPrimaryKey;
+import com.virtual.api.Id;
 import com.virtual.api.TableConfig;
 import com.virtual.exception.GameDBException;
 import com.virtual.persistent.BatchOp;
@@ -8,16 +10,18 @@ import com.virtual.persistent.TableHelper;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
 public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
 
     @Getter
     private final Class<Entity> tableClass;
-    private final Map<Comparable<?>, Record<Entity>> records = new ConcurrentHashMap<>();
+    private Map<Comparable<?>, Record<Entity>> records;
+    private boolean allCache;
     @Getter
     private String tableName;
     private int cacheSize;
@@ -26,10 +30,24 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
 
     private final TableHelper<Entity> tableHelper;
 
+    /**
+     * long 主键自增计数器，起服时根据库中最大主键校正
+     */
+    private final AtomicLong maxId = new AtomicLong();
+    /**
+     * 自增主键处理器，null 表示不自增
+     */
+    private AutoPrimaryKey<?> autoKey;
+    /**
+     * 是否使用内置 long 自增方案（仅该方案需要校正 maxId）
+     */
+    private boolean builtInLongAutoKey = false;
+
 
     public Table(Class<Entity> tableClass) {
         this.tableClass = tableClass;
         initTableInfo();
+        initAutoKey();
         tableHelper = Persistent.INSTANCE.getTableHelper(tableName, tableClass);
     }
 
@@ -40,6 +58,13 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
             tableName = this.tableClass.getSimpleName();
         }
         cacheSize = tableConfig.cacheSize();
+        if (cacheSize == Integer.MAX_VALUE) {
+            records = new AllCache<>();
+            allCache = true;
+        } else {
+            records = new LRUCache<>(cacheSize);
+            allCache = false;
+        }
     }
 
     /**
@@ -55,10 +80,77 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
         loadData.submit();
     }
 
+    /**
+     * 起服时根据库中最大主键校正自增计数器，只对内置 long 自增方案生效
+     */
+    public void initMaxId() {
+        if (!builtInLongAutoKey) {
+            return;
+        }
+        Comparable<?> max = tableHelper.maxKey();
+        if (max instanceof Number n) {
+            maxId.set(n.longValue());
+        }
+    }
+
+    @Override
+    public Comparable<?> maxKey() {
+        return tableHelper.maxKey();
+    }
+
+    /**
+     * 根据 @Id 注解初始化自增主键处理器：
+     * 默认方案（TableAutoKey）仅支持 long 主键；其他类型需自定义 AutoPrimaryKey
+     */
+    private void initAutoKey() {
+        Field idField = null;
+        for (Field field : tableClass.getDeclaredFields()) {
+            if (field.getAnnotation(Id.class) != null) {
+                idField = field;
+                break;
+            }
+        }
+        if (idField == null) {
+            return;
+        }
+        Id id = idField.getAnnotation(Id.class);
+        Class<? extends AutoPrimaryKey<?>> gen = id.autoKeyGen();
+        boolean isLong = idField.getType() == long.class || idField.getType() == Long.class;
+        if (gen == AutoPrimaryKey.TableAutoKey.class) {
+            if (isLong) {
+                this.autoKey = AutoPrimaryKey.TableAutoKey.of(maxId::incrementAndGet);
+                this.builtInLongAutoKey = true;
+            }
+        } else {
+            this.autoKey = newInstance(gen);
+        }
+    }
+
+    private AutoPrimaryKey<?> newInstance(Class<? extends AutoPrimaryKey<?>> gen) {
+        try {
+            return gen.getDeclaredConstructor().newInstance();
+        } catch (Exception e) {
+            throw new GameDBException("实例化自增主键处理器失败: " + gen.getName(), e);
+        }
+    }
+
+    /**
+     * 主键是否自动生成由自增处理器判断（默认空值或数值 0 时生成），手动设置的主键优先
+     */
+    private void assignAutoKey(Entity entity) {
+        if (autoKey == null) {
+            return;
+        }
+        Comparable<?> pk = entity.primaryKey();
+        if (autoKey.shouldGenerate(pk)) {
+            entity.setPrimaryKey(autoKey.nextKey());
+        }
+    }
+
     @Override
     public void insert(Entity entity) {
         checkEntity(entity);
-        // todo 这里的主键先让用户自己设置,后续补充自增主键
+        assignAutoKey(entity);
         validPrimaryKey(entity.primaryKey());
         TransactionImpl transaction = TransactionImpl.checkAndGet();
         RowLock rowLock = Locks.getLock(new LockKey(getTableName(), entity.primaryKey()));
@@ -75,12 +167,16 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
             try {
                 Record<Entity> tRecord = this.records.get(entity.primaryKey());
                 if (tRecord == null) {
-                    Entity select = tableHelper.select(entity.primaryKey());
-                    if (select != null) {
-                        this.records.put(entity.primaryKey(), new Record<>(Record.State.DB, this, select));
-                        throw new GameDBException("主键重复 key:" + entity.primaryKey()); // 主键重复
+                    if (allCache) {
+                        tRecord = new Record<>(Record.State.NULL, this, entity.primaryKey());
+                    } else {
+                        Entity select = tableHelper.select(entity.primaryKey());
+                        if (select != null) {
+                            this.records.put(entity.primaryKey(), new Record<>(Record.State.DB, this, select));
+                            throw new GameDBException("主键重复 key:" + entity.primaryKey()); // 主键重复
+                        }
+                        this.records.put(entity.primaryKey(), tRecord = new Record<>(Record.State.NULL, this, entity.primaryKey()));
                     }
-                    this.records.put(entity.primaryKey(), tRecord = new Record<>(Record.State.NULL, this, entity.primaryKey()));
                 } else if (tRecord.getEntity() != null) {
                     throw new GameDBException("主键重复 key:" + entity.primaryKey()); // 主键重复
                 }
@@ -109,9 +205,13 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
             try {
                 Record<Entity> record = this.records.get(entity.primaryKey());
                 if (record == null) {
-                    Entity select = tableHelper.select(entity.primaryKey());
-                    record = select == null ? new Record<>(Record.State.NULL, this, entity.primaryKey()) : new Record<>(Record.State.DB, this, select);
-                    this.records.put(entity.primaryKey(), record);
+                    if (allCache) {
+                        record = new Record<>(Record.State.NULL, this, entity.primaryKey());
+                    } else {
+                        Entity select = tableHelper.select(entity.primaryKey());
+                        record = select == null ? new Record<>(Record.State.NULL, this, entity.primaryKey()) : new Record<>(Record.State.DB, this, select);
+                        this.records.put(entity.primaryKey(), record);
+                    }
                 }
                 Record<Entity> copy = record.copy();
                 copy.bindLock(rowLock);
@@ -150,10 +250,14 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
             try {
                 Record<Entity> tRecord = this.records.get(id);
                 if (tRecord == null) {
-                    // 穿透到DB中查,如果还是没有,则插入一个空节点,避免每次都穿透
-                    Entity select = tableHelper.select(id);
-                    tRecord = select == null ? new Record<>(Record.State.NULL, this, id) : new Record<>(Record.State.DB, this, select);
-                    this.records.put(id, tRecord);
+                    if (allCache) {
+                        tRecord = new Record<>(Record.State.NULL, this, id);
+                    } else {
+                        // 穿透到DB中查,如果还是没有,则插入一个空节点,避免每次都穿透
+                        Entity select = tableHelper.select(id);
+                        tRecord = select == null ? new Record<>(Record.State.NULL, this, id) : new Record<>(Record.State.DB, this, select);
+                        this.records.put(id, tRecord);
+                    }
                 }
                 Record<Entity> copy = tRecord.copy();
                 copy.bindLock(rowLock);
@@ -205,6 +309,7 @@ public class Table<Entity extends TableDefine> implements TableHelper<Entity> {
         return records.get(primaryKey);
     }
 
+    @SuppressWarnings("unchecked")
     void putRecord(Record<?> record) {
         records.put(record.getPrimaryKey(), (Record<Entity>) record);
     }

@@ -22,7 +22,7 @@ public @interface TableConfig {
     /**
      * 表默认缓存的数量量大小
      */
-    int cacheSize() default 10000;
+    int cacheSize() default Integer.MAX_VALUE;
 
     /**
      * 是否立即落库，true 时事务提交后立即触发快照，不再等待 snapshotPeriod

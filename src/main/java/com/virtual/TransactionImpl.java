@@ -32,7 +32,7 @@ import java.util.concurrent.locks.LockSupport;
  * todo 事物需要补充监控 事务数量、重试率、快照耗时、Flash 吞吐量、队列深度 （MBean 实现）
  */
 @Slf4j
-public final class TransactionImpl implements Transaction, AutoCloseable {
+public final class TransactionImpl implements Transaction {
 
     private static final AtomicLong TRANSACTION_NUMS = new AtomicLong(0);
     private static final AtomicLong TOTAL_SUBMIT = new AtomicLong(0);
@@ -143,11 +143,11 @@ public final class TransactionImpl implements Transaction, AutoCloseable {
         // 对于子事物，将所有的提交日志merge到父日志中
         TransactionImpl transaction = transactions.removeLast();
         if (transactions.isEmpty()) {
+            // 空了,真正开始提交,先循环锁定再慢慢改；checkAndLock 失败时已自行释放锁,直接抛重试
+            if (!checkAndLock()) {
+                throw new RetryException();
+            }
             try {
-                // 空了,真正开始提交,那么此时主要开始遍历所有涉及到的修改，先循环锁定再慢慢改
-                if (!checkAndLock()) {
-                    throw new RetryException();
-                }
                 Set<Entity> entities = HashSet.newHashSet(logs.size());
                 logs.keySet().forEach(entity -> entities.add(entity.getRoot()));
                 Map<LockKey, Record<?>> transactionPack = HashMap.newHashMap(entities.size());
@@ -284,21 +284,30 @@ public final class TransactionImpl implements Transaction, AutoCloseable {
         records.put(lockKey, record);
     }
 
-    private void retry() {
+    /**
+     * 重试前清理本次执行状态,并对当前 records 加写锁。
+     *
+     * @return 本次加上的写锁,调用方需在重跑完成后按序释放,避免与重跑后新增记录的锁混淆
+     */
+    private List<Lock> retry() {
         transactions.clear();
         transactions.add(this);
         commitTask.clear();
         rollbackTask.clear();
         logs.clear();
 
+        List<Lock> acquired = new ArrayList<>();
         for (Map.Entry<LockKey, Record<?>> entry : records.entrySet()) {
             Record<?> copy = entry.getValue();
-            copy.getRowLock().writeLock().lock();
+            Lock lock = copy.getRowLock().writeLock();
+            lock.lock();
+            acquired.add(lock);
             Table<? extends TableDefine> table = copy.getTable();
             Record<? extends TableDefine> newCopy = table.getRecord(copy.getPrimaryKey()).copy();
             newCopy.bindLock(copy.getRowLock());
             entry.setValue(newCopy);
         }
+        return acquired;
     }
 
     private boolean isFinalTransaction() {
@@ -309,11 +318,6 @@ public final class TransactionImpl implements Transaction, AutoCloseable {
         if (reject) {
             throw new GameDBException("服务器繁忙,暂时无法提交修改");
         }
-    }
-
-    @Override
-    public void close() throws Exception {
-        TRANSACTION_POOL.close();
     }
 
     private static class LogicFuture implements Runnable {
@@ -371,9 +375,14 @@ public final class TransactionImpl implements Transaction, AutoCloseable {
                 }
                 log.debug("事物重试 {}", this.logic.getClass().getName());
                 RETRY_COUNT.incrementAndGet();
-                transaction.retry();
-                run();
-                transaction.releaseLock();
+                List<Lock> retryLocks = transaction.retry();
+                try {
+                    run();
+                } finally {
+                    for (Lock lock : retryLocks) {
+                        lock.unlock();
+                    }
+                }
             } else {
                 transaction.rollback();
                 TRANSACTION_NUMS.decrementAndGet();

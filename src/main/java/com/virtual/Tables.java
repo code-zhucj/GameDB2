@@ -154,6 +154,7 @@ public class Tables {
                 Table<?> table = new Table<>((Class<? extends TableDefine>) tableClass);
                 tables.put(tableClass, table);
                 table.loadFromDB();
+                table.initMaxId();
             }
         }
     }
